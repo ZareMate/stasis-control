@@ -5,7 +5,7 @@ const fs = require("fs");
 const http = require("http");
 const crypto = require("crypto");
 const express = require("express");
-const { WebSocketServer } = require("ws");
+const { WebSocketServer, WebSocket } = require("ws");
 
 const ROOT = path.join(__dirname, "..");
 const CONFIG_PATH = path.join(ROOT, "config", "chambers.json");
@@ -18,6 +18,7 @@ const wss = new WebSocketServer({ noServer: true });
 const clients = new Set();
 const logs = [];
 const statuses = new Map();
+const pullTimers = new Map();
 
 const CONTROLLER_TOKEN = process.env.STASIS_TOKEN;
 const PORT = Number(process.env.PORT || config.server.port);
@@ -31,7 +32,8 @@ if (!CONTROLLER_TOKEN) {
 for (const chamber of config.chambers) {
   statuses.set(chamber.id, {
     status: chamber.player ? "ready" : "empty",
-    player: chamber.player || ""
+    player: chamber.player || "",
+    controller: null
   });
 }
 
@@ -39,15 +41,23 @@ app.use(express.json({ limit: "32kb" }));
 app.use(express.static(path.join(ROOT, "public")));
 
 function safeSend(ws, message) {
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message));
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(message));
+    return true;
+  }
+  return false;
 }
 
 function broadcast(message) {
   for (const client of clients) safeSend(client.ws, message);
 }
 
+function controllers() {
+  return [...clients].filter(client => client.role === "controller");
+}
+
 function controllerCount() {
-  return [...clients].filter(client => client.role === "controller").length;
+  return controllers().length;
 }
 
 function browserCount() {
@@ -55,30 +65,207 @@ function browserCount() {
 }
 
 function addLog(type, chamber, player, detail) {
-  const entry = { time: new Date().toISOString(), type, chamber, player, detail: detail || "" };
+  const entry = {
+    time: new Date().toISOString(),
+    type,
+    chamber,
+    player,
+    detail: detail || ""
+  };
+
   logs.unshift(entry);
   logs.splice(50);
   broadcast({ type: "log", entry });
 }
 
 function chamberById(id) {
-  return config.chambers.find(chamber => chamber.id === id);
+  return config.chambers.find(chamber => chamber.id === Number(id));
+}
+
+function baseByChamber(chamberId) {
+  return config.bases.find(base =>
+    base.chambers.includes(Number(chamberId))
+  );
+}
+
+function chamberByPlayer(player, baseId) {
+  const value = String(player || "").trim().toLowerCase();
+  if (!value) return null;
+
+  const base = config.bases.find(b => b.id === Number(baseId));
+  if (!base) return null;
+
+  return config.chambers.find(chamber =>
+    base.chambers.includes(chamber.id) &&
+    String(chamber.player || "").trim().toLowerCase() === value
+  );
+}
+
+function controllerForChamber(chamberId) {
+  const base = baseByChamber(chamberId);
+  if (!base) return null;
+
+  return controllers().find(client => client.base === base.id) || null;
 }
 
 function snapshot() {
   return {
     bases: config.bases,
-    chambers: config.chambers.map(chamber => ({ ...chamber, ...(statuses.get(chamber.id) || {}) })),
+    chambers: config.chambers.map(chamber => ({
+      ...chamber,
+      ...(statuses.get(chamber.id) || {})
+    })),
     logs,
     controllers: controllerCount(),
-    browsers: browserCount()
+    browsers: browserCount(),
+    controllerDetails: controllers().map(client => ({
+      name: client.controllerName,
+      base: client.base,
+      connectedAt: client.connectedAt
+    }))
   };
 }
 
-app.get("/api/state", (_req, res) => res.json(snapshot()));
+function broadcastSnapshot() {
+  broadcast({ type: "state", state: snapshot() });
+}
+
+function clearPullTimer(chamberId) {
+  const timer = pullTimers.get(chamberId);
+  if (timer) clearTimeout(timer);
+  pullTimers.delete(chamberId);
+}
+
+function markControllerOffline(baseId) {
+  for (const chamber of config.chambers) {
+    const base = baseByChamber(chamber.id);
+    if (!base || base.id !== baseId) continue;
+
+    const current = statuses.get(chamber.id) || {
+      player: chamber.player || "",
+      status: "empty"
+    };
+
+    clearPullTimer(chamber.id);
+
+    statuses.set(chamber.id, {
+      ...current,
+      player: current.player || chamber.player || "",
+      status: "offline",
+      controller: null
+    });
+  }
+}
+
+function markControllerOnline(baseId, controllerName) {
+  for (const chamber of config.chambers) {
+    const base = baseByChamber(chamber.id);
+    if (!base || base.id !== baseId) continue;
+
+    const current = statuses.get(chamber.id) || {};
+    statuses.set(chamber.id, {
+      player: current.player || chamber.player || "",
+      status: "offline",
+      controller: controllerName
+    });
+  }
+}
+
+function updateChamberFromController(client, input) {
+  let chamberId = Number.isInteger(Number(input.chamber))
+    ? Number(input.chamber)
+    : null;
+
+  let chamber = chamberId ? chamberById(chamberId) : null;
+
+  if (!chamber && input.player) {
+    chamber = chamberByPlayer(input.player, client.base);
+    if (chamber) chamberId = chamber.id;
+  }
+
+  if (!chamber) {
+    console.warn(
+      "[WS] Ignoring status: chamber could not be resolved",
+      input
+    );
+    return;
+  }
+
+  const base = baseByChamber(chamber.id);
+  if (!base || base.id !== client.base) {
+    console.warn(
+      "[WS] Ignoring status from controller " +
+      client.controllerName +
+      " for chamber " +
+      chamber.id +
+      " outside its base"
+    );
+    return;
+  }
+
+  const current = statuses.get(chamber.id) || {};
+  const nextStatus = String(input.status || current.status || "empty");
+
+  const next = {
+    player:
+      typeof input.player === "string" && input.player.trim()
+        ? input.player.trim()
+        : current.player || chamber.player || "",
+    status: ["empty", "ready", "pulling", "pulled"].includes(nextStatus)
+      ? nextStatus
+      : current.status || "empty",
+    controller: client.controllerName
+  };
+
+  statuses.set(chamber.id, next);
+
+  if (next.status === "ready" || next.status === "pulled") {
+    clearPullTimer(chamber.id);
+  }
+
+  broadcast({
+    type: "chamber",
+    chamber: chamber.id,
+    state: next
+  });
+
+  if (next.status === "pulled") {
+    addLog("DONE", chamber.id, next.player, "Pearl pulled");
+  } else if (next.status === "ready") {
+    addLog("READY", chamber.id, next.player, "Chamber ready");
+  }
+}
+
+function processControllerMessage(client, message) {
+  if (message.type === "status") {
+    updateChamberFromController(client, message);
+    return;
+  }
+
+  // Also accept a complete stasis snapshot. This makes the server tolerant
+  // of controllers that report several chambers in one WebSocket message.
+  if (
+    (message.type === "stasis" ||
+      message.type === "stasis-data" ||
+      message.type === "state") &&
+    Array.isArray(message.chambers)
+  ) {
+    for (const chamber of message.chambers) {
+      updateChamberFromController(client, chamber);
+    }
+  }
+}
+
+app.get("/api/state", (_req, res) => {
+  res.json(snapshot());
+});
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, controllers: controllerCount(), browsers: browserCount() });
+  res.json({
+    ok: true,
+    controllers: controllerCount(),
+    browsers: browserCount()
+  });
 });
 
 app.post("/api/pull", (req, res) => {
@@ -89,94 +276,248 @@ app.post("/api/pull", (req, res) => {
     return res.status(404).json({ error: "Unknown chamber" });
   }
 
+  const base = baseByChamber(chamberId);
+  if (!base) {
+    return res.status(500).json({ error: "Chamber has no configured base" });
+  }
+
   const state = statuses.get(chamberId);
   if (!state || !state.player) {
-    return res.status(409).json({ error: "This chamber has no player assigned" });
+    return res.status(409).json({
+      error: "This chamber has no player assigned"
+    });
   }
 
   if (state.status === "pulling") {
-    return res.status(409).json({ error: "This chamber is already being pulled" });
+    return res.status(409).json({
+      error: "This chamber is already being pulled"
+    });
   }
 
-  const controllers = [...clients].filter(client => client.role === "controller");
-  if (!controllers.length) {
-    return res.status(503).json({ error: "No ComputerCraft controller connected" });
+  const controller = controllerForChamber(chamberId);
+
+  if (!controller) {
+    return res.status(503).json({
+      error: base.name + " controller is offline"
+    });
   }
 
   const requestId = crypto.randomUUID();
-  const command = { type: "pull", chamber: chamberId, player: state.player, requestId };
-  controllers.forEach(client => safeSend(client.ws, command));
 
-  statuses.set(chamberId, { ...state, status: "pulling" });
-  broadcast({ type: "chamber", chamber: chamberId, state: statuses.get(chamberId) });
-  addLog("PULL", chamberId, state.player, "Command sent to ComputerCraft");
+  const command = {
+    type: "pull",
+    base: base.id,
+    chamber: chamberId,
+    player: state.player,
+    requestId
+  };
+
+  if (!safeSend(controller.ws, command)) {
+    return res.status(503).json({
+      error: "Controller connection lost"
+    });
+  }
+
+  statuses.set(chamberId, {
+    ...state,
+    status: "pulling",
+    controller: controller.controllerName
+  });
+
+  clearPullTimer(chamberId);
+
+  pullTimers.set(
+    chamberId,
+    setTimeout(() => {
+      const current = statuses.get(chamberId);
+      if (!current || current.status !== "pulling") return;
+
+      statuses.set(chamberId, {
+        ...current,
+        status: "ready"
+      });
+
+      addLog(
+        "TIMEOUT",
+        chamberId,
+        current.player,
+        "Controller did not report the pull result"
+      );
+
+      broadcast({
+        type: "chamber",
+        chamber: chamberId,
+        state: statuses.get(chamberId)
+      });
+    }, 15000)
+  );
+
+  broadcast({
+    type: "chamber",
+    chamber: chamberId,
+    state: statuses.get(chamberId)
+  });
+
+  addLog(
+    "PULL",
+    chamberId,
+    state.player,
+    base.name + " / " + controller.controllerName
+  );
 
   res.json({ ok: true, requestId });
 });
 
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url, "http://localhost");
+
   if (url.pathname !== config.server.wsPath) {
     socket.destroy();
     return;
   }
-  wss.handleUpgrade(request, socket, head, ws => wss.emit("connection", ws, request));
+
+  wss.handleUpgrade(
+    request,
+    socket,
+    head,
+    ws => wss.emit("connection", ws, request)
+  );
 });
 
 wss.on("connection", (ws, request) => {
   const url = new URL(request.url, "http://localhost");
+
   const role = url.searchParams.get("role");
   const token = url.searchParams.get("token");
-  const controllerName = url.searchParams.get("name") || "controller";
+  const controllerName =
+    url.searchParams.get("name") || "controller";
 
-  const authorized = role === "browser" || (role === "controller" && token === CONTROLLER_TOKEN);
-  if (!authorized) {
+  if (role === "browser") {
+    const client = {
+      ws,
+      role: "browser",
+      controllerName: null,
+      base: null,
+      connectedAt: new Date().toISOString()
+    };
+
+    clients.add(client);
+    safeSend(ws, { type: "state", state: snapshot() });
+
+    ws.on("close", () => {
+      clients.delete(client);
+    });
+
+    ws.on("error", error =>
+      console.error("[WS browser] error:", error.message)
+    );
+
+    return;
+  }
+
+  if (role !== "controller" || token !== CONTROLLER_TOKEN) {
     ws.close(1008, "Unauthorized");
     return;
   }
 
-  const client = { ws, role, controllerName };
-  clients.add(client);
+  let baseId = Number(url.searchParams.get("base"));
 
-  safeSend(ws, { type: "state", state: snapshot() });
-  broadcast({ type: "connections", controllers: controllerCount(), browsers: browserCount() });
+  // Backwards compatibility with controller names like "base-1".
+  if (!Number.isInteger(baseId)) {
+    const match = controllerName.match(/base[-_ ]?(\d+)/i);
+    if (match) baseId = Number(match[1]);
+  }
+
+  const base = config.bases.find(item => item.id === baseId);
+
+  if (!base) {
+    ws.close(1008, "Unknown base");
+    return;
+  }
+
+  // Only one active controller should own a base.
+  for (const existing of controllers()) {
+    if (existing.base !== base.id) continue;
+    existing.ws.close(1000, "Replaced by a newer controller connection");
+    clients.delete(existing);
+    markControllerOffline(base.id);
+  }
+
+  const client = {
+    ws,
+    role: "controller",
+    controllerName,
+    base: base.id,
+    connectedAt: new Date().toISOString()
+  };
+
+  clients.add(client);
+  markControllerOnline(base.id, controllerName);
+
+  safeSend(ws, {
+    type: "state",
+    state: snapshot()
+  });
+
+  addLog(
+    "CONNECT",
+    null,
+    null,
+    controllerName + " connected to " + base.name
+  );
+  broadcastSnapshot();
 
   ws.on("message", raw => {
     let message;
+
     try {
       message = JSON.parse(raw.toString());
     } catch {
-      safeSend(ws, { type: "error", error: "Invalid JSON" });
+      safeSend(ws, {
+        type: "error",
+        error: "Invalid JSON"
+      });
       return;
     }
 
-    if (client.role !== "controller" || message.type !== "status") return;
-
-    const chamberId = Number(message.chamber);
-    const chamber = chamberById(chamberId);
-    if (!chamber) return;
-
-    const current = statuses.get(chamberId) || { player: chamber.player || "", status: "empty" };
-    const next = {
-      player: typeof message.player === "string" ? message.player : current.player || "",
-      status: typeof message.status === "string" ? message.status : current.status || "empty"
-    };
-
-    statuses.set(chamberId, next);
-    broadcast({ type: "chamber", chamber: chamberId, state: next });
-
-    if (message.status === "pulled") addLog("DONE", chamberId, next.player, "Pearl pulled");
-    else if (message.status === "ready") addLog("READY", chamberId, next.player, "Chamber ready");
+    processControllerMessage(client, message);
   });
 
   ws.on("close", () => {
     clients.delete(client);
-    broadcast({ type: "connections", controllers: controllerCount(), browsers: browserCount() });
+
+    const stillConnected = controllers().some(
+      current => current.base === client.base
+    );
+
+    if (!stillConnected) {
+      markControllerOffline(client.base);
+      addLog(
+        "DISCONNECT",
+        null,
+        null,
+        client.controllerName + " disconnected from " + base.name
+      );
+      broadcastSnapshot();
+    } else {
+      broadcast({
+        type: "connections",
+        controllers: controllerCount(),
+        browsers: browserCount()
+      });
+    }
   });
 
-  ws.on("error", error => console.error("[WS] error:", error.message));
+  ws.on("error", error =>
+    console.error("[WS controller] error:", error.message)
+  );
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log("Stasis Control running on http://0.0.0.0:" + PORT);
+  console.log(
+    "Stasis Control running on http://0.0.0.0:" + PORT
+  );
+  console.log(
+    "WebSocket path: " + config.server.wsPath
+  );
 });
