@@ -11,14 +11,22 @@ local BASE_ID = 1
 
 local PULSE_TIME = 0.20
 
--- Add the chamber number when you know it.
--- "chamber" is used for the initial ready announcement.
--- The player name is still used to find the relay when a pull arrives.
+-- Base 1 chamber layout:
+--
+-- LEFT                                      RIGHT
+-- Fobablo | Armadillo122 | GRI_9 | 4e6qr | ZareMate | Shark107 | Piotrusek69
+-- relay 6 | relay 5       | relay 4| relay 3| relay 2 | relay 1 | relay 0
+--
+-- Relay 0 is the chamber on the far right.
+
 local RELAYS = {
-    { chamber = 1, player = "Piotrusek69", relay = "redstone_relay_1" },
-    { chamber = 2, player = "Toprak", relay = "redstone_relay_2" },
-    { chamber = 3, player = "Bobschneleton", relay = "redstone_relay_3" },
-    -- { chamber = 4, player = "AnotherPlayer", relay = "redstone_relay_4" },
+    { chamber = 1, player = "Piotrusek69", relay = "redstone_relay_0" },
+    { chamber = 2, player = "Shark107", relay = "redstone_relay_1" },
+    { chamber = 3, player = "ZareMate", relay = "redstone_relay_2" },
+    { chamber = 4, player = "4e6qr", relay = "redstone_relay_3" },
+    { chamber = 5, player = "GRI_9", relay = "redstone_relay_4" },
+    { chamber = 6, player = "Armadillo122", relay = "redstone_relay_5" },
+    { chamber = 7, player = "Fobablo", relay = "redstone_relay_6" },
 }
 
 local function encode(value)
@@ -117,7 +125,6 @@ local function handlePull(ws, command)
         return
     end
 
-    -- Protect this controller from accidentally handling another base's command.
     if command.base ~= nil and tonumber(command.base) ~= BASE_ID then
         return
     end
@@ -196,7 +203,6 @@ local function announceConfiguredPlayers(ws)
                 entry.relay
             )
 
-            -- Tell the website that this chamber is currently ready.
             sendStatus(
                 ws,
                 entry.chamber,
@@ -211,8 +217,6 @@ local function announceConfiguredPlayers(ws)
                 entry.player
             )
 
-            -- Report the chamber as unavailable instead of leaving
-            -- the website showing stale READY data.
             sendStatus(
                 ws,
                 entry.chamber,
