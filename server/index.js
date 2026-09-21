@@ -20,6 +20,232 @@ const CONTROLLER_TOKEN = process.env.STASIS_TOKEN;
 const PORT = Number(process.env.PORT || 3000);
 const WS_PATH = "/ws";
 
+const DATA_DIR = path.join(ROOT, "data");
+const PREFERENCES_FILE = path.join(DATA_DIR, "player-preferences.json");
+const PULL_API_TOKEN = process.env.PULL_API_TOKEN || "";
+
+function loadPreferences() {
+  try {
+    return JSON.parse(fs.readFileSync(PREFERENCES_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+let playerPreferences = loadPreferences();
+
+function savePreferences() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(
+    PREFERENCES_FILE,
+    JSON.stringify(playerPreferences, null, 2) + "\n",
+    "utf8"
+  );
+}
+
+function playerKey(player) {
+  return String(player || "").trim().toLowerCase();
+}
+
+function defaultBaseForPlayer(player) {
+  const value = playerPreferences[playerKey(player)]?.defaultBase;
+  return Number.isInteger(Number(value)) ? Number(value) : null;
+}
+
+function findPlayerReports(player) {
+  const wanted = playerKey(player);
+
+  return [...collectReports().values()].filter(
+    report =>
+      playerKey(report.player) === wanted &&
+      report.player &&
+      report.status !== "empty"
+  );
+}
+
+function resolvePlayerChamber(player, requestedBase = null) {
+  const reports = findPlayerReports(player);
+
+  if (!reports.length) {
+    return {
+      error: 404,
+      message: "Player is not currently stored in a reported chamber"
+    };
+  }
+
+  let base = Number(requestedBase);
+
+  if (!Number.isInteger(base)) {
+    const preferred = defaultBaseForPlayer(player);
+
+    if (preferred !== null) {
+      base = preferred;
+    }
+  }
+
+  if (Number.isInteger(base)) {
+    const matches = reports.filter(
+      report => Number(report.base) === base
+    );
+
+    if (!matches.length) {
+      const available = [...new Set(reports.map(report => report.base))]
+        .sort((a, b) => Number(a) - Number(b));
+
+      return {
+        error: 409,
+        message:
+          "Player is not reported at their default base",
+        availableBases: available
+      };
+    }
+
+    if (matches.length > 1) {
+      return {
+        error: 409,
+        message: "Player has multiple chambers at the selected base"
+      };
+    }
+
+    return { report: matches[0] };
+  }
+
+  if (reports.length > 1) {
+    return {
+      error: 409,
+      message:
+        "Player is stored at multiple bases. Set a default base in the dashboard configuration.",
+      availableBases: [...new Set(reports.map(report => report.base))]
+        .sort((a, b) => Number(a) - Number(b))
+    };
+  }
+
+  return { report: reports[0] };
+}
+
+function executePull(base, chamber) {
+  const key = chamberKey(base, chamber);
+  const report = collectReports().get(key);
+
+  if (!report) {
+    return {
+      error: 404,
+      body: { error: "Chamber is not currently reported by ComputerCraft" }
+    };
+  }
+
+  if (!report.player) {
+    return {
+      error: 409,
+      body: { error: "This chamber has no player reported" }
+    };
+  }
+
+  if (report.status === "pulling") {
+    return {
+      error: 409,
+      body: { error: "This chamber is already being pulled" }
+    };
+  }
+
+  const controller = controllerForChamber(base, chamber);
+
+  if (!controller) {
+    return {
+      error: 503,
+      body: { error: "No ComputerCraft controller connected for this base" }
+    };
+  }
+
+  const requestId = crypto.randomUUID();
+
+  const command = {
+    type: "pull",
+    base,
+    chamber,
+    player: report.player,
+    requestId
+  };
+
+  if (!safeSend(controller.ws, command)) {
+    return {
+      error: 503,
+      body: { error: "Controller connection lost" }
+    };
+  }
+
+  const sourceReport = controller.reports.get(key) || report;
+
+  controller.reports.set(key, {
+    ...sourceReport,
+    status: "pulling",
+    updatedAt: Date.now()
+  });
+
+  clearPullTimer(key);
+
+  pullTimers.set(
+    key,
+    setTimeout(() => {
+      const current = collectReports().get(key);
+
+      if (!current || current.status !== "pulling") {
+        return;
+      }
+
+      for (const client of controllerClients()) {
+        const currentReport = client.reports.get(key);
+
+        if (currentReport && currentReport.status === "pulling") {
+          client.reports.set(key, {
+            ...currentReport,
+            status: "ready",
+            updatedAt: Date.now()
+          });
+        }
+      }
+
+      broadcast({
+        type: "chamber",
+        chamber: key,
+        state: {
+          ...current,
+          status: "ready"
+        },
+        playerCount: reportedPlayerCount()
+      });
+    }, 15000)
+  );
+
+  const effective = collectReports().get(key);
+
+  broadcast({
+    type: "chamber",
+    chamber: key,
+    state: {
+      ...effective,
+      controller: controller.controllerName
+    },
+    playerCount: reportedPlayerCount()
+  });
+
+  addLog(
+    "PULL",
+    chamber,
+    report.player,
+    controller.baseName + " / " + controller.controllerName,
+    base
+  );
+
+  return {
+    ok: true,
+    requestId,
+    player: report.player,
+    base,
+    chamber
+  };
+}
+
 if (!CONTROLLER_TOKEN) {
   console.error("Missing STASIS_TOKEN in .env");
   console.error("Create a .env file with STASIS_TOKEN=your-secret-token");
@@ -587,6 +813,85 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+app.get("/api/preference", (req, res) => {
+  const player = String(req.query.player || "").trim();
+
+  if (!player) {
+    return res.status(400).json({
+      error: "player is required"
+    });
+  }
+
+  res.json({
+    player,
+    defaultBase: defaultBaseForPlayer(player)
+  });
+});
+
+app.post("/api/preference", (req, res) => {
+  const player = String(req.body?.player || "").trim();
+  const defaultBase = Number(req.body?.defaultBase);
+
+  if (!player) {
+    return res.status(400).json({
+      error: "player is required"
+    });
+  }
+
+  if (!Number.isInteger(defaultBase) || defaultBase < 0) {
+    return res.status(400).json({
+      error: "defaultBase must be a non-negative integer"
+    });
+  }
+
+  const baseExists = getBaseInfo().has(defaultBase);
+
+  if (!baseExists) {
+    return res.status(404).json({
+      error: "That base is not currently connected"
+    });
+  }
+
+  playerPreferences[playerKey(player)] = {
+    player,
+    defaultBase,
+    updatedAt: new Date().toISOString()
+  };
+
+  savePreferences();
+
+  res.json({
+    ok: true,
+    player,
+    defaultBase
+  });
+});
+
+app.get("/api/players", (_req, res) => {
+  const players = [...collectReports().values()]
+    .filter(report => report.player && report.status !== "empty")
+    .map(report => report.player)
+    .filter((player, index, all) =>
+      all.findIndex(other => playerKey(other) === playerKey(player)) === index
+    )
+    .sort((a, b) => a.localeCompare(b));
+
+  res.json({ players });
+});
+
+app.get("/api/state", (_req, res) => {
+  res.json(snapshot());
+});
+
+app.get("/api/health", (_req, res) => {
+  res.json({
+    ok: true,
+    controllers: controllerClients().length,
+    browsers: browserClients().length,
+    playerCount: reportedPlayerCount()
+  });
+});
+
 app.post("/api/pull", (req, res) => {
   const base = Number(req.body && req.body.base);
   const chamber = Number(req.body && req.body.chamber);
@@ -597,118 +902,59 @@ app.post("/api/pull", (req, res) => {
     });
   }
 
-  const key = chamberKey(base, chamber);
-  const report = collectReports().get(key);
+  const result = executePull(base, chamber);
 
-  if (!report) {
-    return res.status(404).json({
-      error: "Chamber is not currently reported by ComputerCraft"
+  if (result.error) {
+    return res.status(result.error).json(result.body);
+  }
+
+  return res.json(result);
+});
+
+app.post("/api/pull-player", (req, res) => {
+  if (!PULL_API_TOKEN || req.get("x-stasis-pull-token") !== PULL_API_TOKEN) {
+    return res.status(401).json({
+      error: "Unauthorized"
     });
   }
 
-  if (!report.player) {
-    return res.status(409).json({
-      error: "This chamber has no player reported"
+  const player = String(req.body?.player || "").trim();
+  const requestedBase =
+    req.body?.base === undefined || req.body?.base === null
+      ? null
+      : Number(req.body.base);
+
+  if (!player) {
+    return res.status(400).json({
+      error: "player is required"
     });
   }
 
-  if (report.status === "pulling") {
-    return res.status(409).json({
-      error: "This chamber is already being pulled"
+  if (
+    requestedBase !== null &&
+    (!Number.isInteger(requestedBase) || requestedBase < 0)
+  ) {
+    return res.status(400).json({
+      error: "base must be a non-negative integer"
     });
   }
 
-  const controller = controllerForChamber(base, chamber);
+  const resolved = resolvePlayerChamber(player, requestedBase);
 
-  if (!controller) {
-    return res.status(503).json({
-      error: "No ComputerCraft controller connected for this base"
+  if (resolved.error) {
+    return res.status(resolved.error).json({
+      error: resolved.message,
+      availableBases: resolved.availableBases || undefined
     });
   }
 
-  const requestId = crypto.randomUUID();
+  const result = executePull(resolved.report.base, resolved.report.id);
 
-  const command = {
-    type: "pull",
-    base,
-    chamber,
-    player: report.player,
-    requestId
-  };
-
-  if (!safeSend(controller.ws, command)) {
-    return res.status(503).json({
-      error: "Controller connection lost"
-    });
+  if (result.error) {
+    return res.status(result.error).json(result.body);
   }
 
-  const sourceReport = controller.reports.get(key) || report;
-
-  controller.reports.set(key, {
-    ...sourceReport,
-    status: "pulling",
-    updatedAt: Date.now()
-  });
-
-  clearPullTimer(key);
-
-  pullTimers.set(
-    key,
-    setTimeout(() => {
-      const current = collectReports().get(key);
-
-      if (!current || current.status !== "pulling") {
-        return;
-      }
-
-      for (const client of controllerClients()) {
-        const currentReport = client.reports.get(key);
-
-        if (currentReport && currentReport.status === "pulling") {
-          client.reports.set(key, {
-            ...currentReport,
-            status: "ready",
-            updatedAt: Date.now()
-          });
-        }
-      }
-
-      broadcast({
-        type: "chamber",
-        chamber: key,
-        state: {
-          ...current,
-          status: "ready"
-        },
-        playerCount: reportedPlayerCount()
-      });
-    }, 15000)
-  );
-
-  const effective = collectReports().get(key);
-
-  broadcast({
-    type: "chamber",
-    chamber: key,
-    state: {
-      ...effective,
-      controller: controller.controllerName
-    },
-    playerCount: reportedPlayerCount()
-  });
-
-  addLog(
-    "PULL",
-    chamber,
-    report.player,
-    controller.baseName + " / " + controller.controllerName,
-    base
-  );
-
-  res.json({
-    ok: true,
-    requestId
-  });
+  return res.json(result);
 });
 
 server.on("upgrade", (request, socket, head) => {
@@ -763,9 +1009,7 @@ wss.on("connection", (ws, request) => {
     return;
   }
 
-  if (role === "browser") {
-    // handled above
-  } else if (token !== CONTROLLER_TOKEN) {
+  if (token !== CONTROLLER_TOKEN) {
     ws.close(1008, "Unauthorized");
     return;
   }
