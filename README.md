@@ -208,25 +208,27 @@ npm install
 npm run stt:setup
 ```
 
-The setup script clones `whisper.cpp`, builds `whisper-cli`, and downloads the `tiny.en` model. The official whisper.cpp documentation shows the same build flow and its `download-ggml-model.sh` model downloader. citeturn754375search1turn754375search0
+The setup script clones `whisper.cpp`, builds `whisper-cli`, and downloads the configured Whisper model.
 
-The bot then listens for:
+The bot listens for a single voice trigger word:
 
 ```text
-Farex pull my pearl
+pull
 ```
 
-and triggers the existing pull API for `Farex`, using the saved default base.
+When the trigger is detected, it calls the existing pull API for the player configured by `VOICE_TRIGGER_PLAYER`, using the saved default base.
 
-Change the trigger with:
+Configure the trigger with:
 
 ```env
-VOICE_TRIGGER=Farex pull my pearl
+VOICE_TRIGGER=pull
 VOICE_TRIGGER_PLAYER=Farex
 WHISPER_CLI_PATH=./whisper.cpp/build/bin/whisper-cli
-WHISPER_MODEL_PATH=./models/ggml-tiny.en.bin
+WHISPER_MODEL_PATH=./models/ggml-large-v3-turbo.bin
 WHISPER_THREADS=4
 ```
+
+The single-word trigger also tolerates small Whisper transcription errors, such as recognizing `pull` as `pulmai`.
 
 The `whisper-cli` tool accepts 16-bit WAV input; the bot converts Discord's decoded PCM stream into a temporary 16-bit, 16 kHz mono WAV file before transcription. citeturn754375search1turn754375search3
 
