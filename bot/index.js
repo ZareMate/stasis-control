@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const fs = require("fs");
+const path = require("path");
 const {
   Client,
   GatewayIntentBits,
@@ -32,7 +33,12 @@ const PULL_API_TOKEN =
 
 const VOSK_MODEL_PATH =
   process.env.VOSK_MODEL_PATH ||
-  "./models/vosk-model-small-en-us-0.15";
+  path.join(
+    __dirname,
+    "..",
+    "models",
+    "vosk-model-small-en-us-0.15"
+  );
 
 const VOICE_TRIGGER = (
   process.env.VOICE_TRIGGER || "Farex pull my pearl"
