@@ -1001,8 +1001,28 @@ app.post("/api/pull", (req, res) => {
   return res.json(result);
 });
 
-app.post("/api/pull-player", (req, res) => {
-  if (!PULL_API_TOKEN || req.get("x-stasis-pull-token") !== PULL_API_TOKEN) {
+function authorizedComputerRequest(req) {
+  const directToken = req.get("x-stasis-token");
+
+  if (directToken && directToken === CONTROLLER_TOKEN) {
+    return true;
+  }
+
+  const authorization = req.get("authorization") || "";
+  const match = authorization.match(/^Bearer\\s+(.+)$/i);
+
+  return Boolean(
+    match &&
+    match[1] === CONTROLLER_TOKEN
+  );
+}
+
+function handlePlayerPullRequest(req, res, requirePullToken = true) {
+  if (
+    requirePullToken
+      ? !PULL_API_TOKEN || req.get("x-stasis-pull-token") !== PULL_API_TOKEN
+      : !authorizedComputerRequest(req)
+  ) {
     return res.status(401).json({
       error: "Unauthorized"
     });
@@ -1034,17 +1054,36 @@ app.post("/api/pull-player", (req, res) => {
   if (resolved.error) {
     return res.status(resolved.error).json({
       error: resolved.message,
-      availableBases: resolved.availableBases || undefined
+      availableBases: resolved.availableBases || undefined,
+      defaultBase: resolved.defaultBase ?? undefined
     });
   }
 
-  const result = executePull(resolved.report.base, resolved.report.id);
+  const result = executePull(
+    resolved.report.base,
+    resolved.report.id
+  );
 
   if (result.error) {
     return res.status(result.error).json(result.body);
   }
 
-  return res.json(result);
+  return res.json({
+    ...result,
+    defaultUsed:
+      requestedBase === null &&
+      resolved.fallbackBase !== true &&
+      defaultBaseForPlayer(player) !== null,
+    fallbackBase: resolved.fallbackBase === true
+  });
+}
+
+app.post("/api/pull-player", (req, res) => {
+  return handlePlayerPullRequest(req, res, true);
+});
+
+app.post("/api/computer/pull", (req, res) => {
+  return handlePlayerPullRequest(req, res, false);
 });
 
 server.on("upgrade", (request, socket, head) => {
