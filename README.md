@@ -235,3 +235,41 @@ The single-word trigger also tolerates small Whisper transcription errors. Voice
 The Whisper server accepts WAV files through its `/inference` HTTP endpoint. The bot converts Discord's decoded PCM stream into a temporary 16-bit, 16 kHz mono WAV file and sends it to the persistent server. citeturn957550search1turn426544view0
 
 `/leave` disconnects the bot and stops voice recognition.
+
+## ComputerCraft pull API
+
+Computers can request a pearl pull over HTTP using:
+
+```text
+POST /api/computer/pull
+```
+
+Authenticate with the same `STASIS_TOKEN` used by ComputerCraft controllers, using either `X-Stasis-Token` or `Authorization: Bearer ...`.
+
+The request can specify both player and base:
+
+```json
+{
+  "player": "PlayerName",
+  "base": 1
+}
+```
+
+Or just the player:
+
+```json
+{
+  "player": "PlayerName"
+}
+```
+
+When no base is supplied, the server uses that player's configured default base. If there is no default and the player is reported at multiple bases, the response contains `availableBases` and no pull is performed.
+
+A ready-to-use ComputerCraft program is included at `computercraft/pull.lua`:
+
+```text
+pull <player>
+pull <base> <player>
+```
+
+Set `SERVER_URL` and `STASIS_TOKEN` at the top of the program before using it.
