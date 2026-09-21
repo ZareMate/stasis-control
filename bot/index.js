@@ -15,11 +15,11 @@ const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID || "";
 const STASIS_API_URL = (
   process.env.STASIS_API_URL || "http://127.0.0.1:3000"
 ).replace(/\/+$/, "");
-const PULL_API_TOKEN = process.env.PULL_API_TOKEN;
+const PULL_API_TOKEN = process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN;
 
 if (!DISCORD_TOKEN) throw new Error("Missing DISCORD_TOKEN");
 if (!DISCORD_CLIENT_ID) throw new Error("Missing DISCORD_CLIENT_ID");
-if (!PULL_API_TOKEN) throw new Error("Missing PULL_API_TOKEN");
+if (!PULL_API_TOKEN) throw new Error("Missing PULL_API_TOKEN or STASIS_TOKEN");
 
 const pullCommand = new SlashCommandBuilder()
   .setName("pull")
