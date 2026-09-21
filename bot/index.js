@@ -169,7 +169,9 @@ client.on("interactionCreate", async interaction => {
 
       if (Array.isArray(result.availableBases) && result.availableBases.length) {
         message +=
-          "\nAvailable bases: " +
+          "\nConfigured default base: " +
+          (result.defaultBase ?? "none") +
+          ". Available bases: " +
           result.availableBases.join(", ") +
           ". Set the player's default base in the Stasis Control dashboard.";
       }
