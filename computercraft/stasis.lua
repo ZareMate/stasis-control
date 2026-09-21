@@ -10,14 +10,12 @@ local CONTROLLER_NAME = "base-1"
 local BASE_ID = 1
 
 local PULSE_TIME = 1
+local HEARTBEAT_INTERVAL = 10
+local HEARTBEAT_TIMEOUT = 5
+local DISPLAY_REFRESH = 1
+local PULLED_DISPLAY_TIME = 5
 
--- Relay 0 is on the right.
---
--- LEFT                                      RIGHT
--- FcFabio | M1stak3en | EnderiumEnd | Fobablo | Armadillo122 | GRI_9 | 4e6qr | ZareMate | Shark107 | Piotrusek69
--- relay 26| relay 27  | relay 28     | relay 26 | relay 25      | relay 24| relay 23| relay 22  | relay 21 | relay 20
---
--- Chamber numbering follows the RELAYS table below.
+local MONITOR = peripheral.find("monitor")
 
 local RELAYS = {
     { chamber = 1, player = "Piotrusek69", relay = "redstone_relay_20" },
@@ -30,6 +28,14 @@ local RELAYS = {
     { chamber = 8, player = "M1stak3en", relay = "redstone_relay_27" },
     { chamber = 9, player = "EnderiumEnd", relay = "redstone_relay_28" }
 }
+
+local chambers = {}
+local wsConnected = false
+local heartbeatPending = false
+local heartbeatSentAt = 0
+local lastHeartbeatAck = 0
+local heartbeatId = 0
+local lastError = nil
 
 local function encode(value)
     return textutils.urlEncode(tostring(value))
@@ -68,11 +74,212 @@ local function sendMessage(ws, message)
     end)
 
     if not ok then
-        print("WebSocket send failed: " .. tostring(err))
+        lastError = tostring(err)
+        print("WebSocket send failed: " .. lastError)
         return false
     end
 
     return true
+end
+
+local function statusColor(status)
+    if not MONITOR then
+        return colors.white
+    end
+
+    if status == "ready" then
+        return colors.lime
+    elseif status == "pulling" then
+        return colors.orange
+    elseif status == "pulled" then
+        return colors.yellow
+    elseif status == "empty" then
+        return colors.red
+    end
+
+    return colors.white
+end
+
+local function fit(text, width)
+    text = tostring(text or "")
+
+    if #text > width then
+        return string.sub(text, 1, math.max(0, width - 1)) .. "…"
+    end
+
+    return text .. string.rep(" ", width - #text)
+end
+
+local function drawMonitor()
+    if not MONITOR then
+        return
+    end
+
+    local width, height = MONITOR.getSize()
+
+    MONITOR.setBackgroundColor(colors.black)
+    MONITOR.clear()
+    MONITOR.setTextScale(1)
+    MONITOR.setCursorPos(1, 1)
+
+    local function writeLine(line, color)
+        local _, y = MONITOR.getCursorPos()
+
+        if y > height then
+            return
+        end
+
+        MONITOR.setTextColor(color or colors.white)
+        MONITOR.write(fit(line, width))
+
+        if y < height then
+            MONITOR.setCursorPos(1, y + 1)
+        end
+    end
+
+    local title = "STASIS CONTROL"
+    local titleX = math.max(1, math.floor((width - #title) / 2) + 1)
+
+    MONITOR.setCursorPos(titleX, 1)
+    MONITOR.setTextColor(colors.orange)
+    MONITOR.write(title)
+
+    MONITOR.setCursorPos(1, 2)
+    writeLine("Base: " .. tostring(BASE_ID) .. "  " .. CONTROLLER_NAME)
+
+    MONITOR.setCursorPos(1, 3)
+    writeLine(
+        "WS:   " .. (wsConnected and "CONNECTED" or "DISCONNECTED"),
+        wsConnected and colors.lime or colors.red
+    )
+
+    local heartbeatText = "WAITING"
+
+    if heartbeatPending then
+        heartbeatText = "CHECKING"
+    elseif lastHeartbeatAck > 0 then
+        local age = math.max(
+            0,
+            math.floor((os.epoch("utc") - lastHeartbeatAck) / 1000)
+        )
+        heartbeatText = "OK " .. tostring(age) .. "s"
+    end
+
+    MONITOR.setCursorPos(1, 4)
+    writeLine(
+        "HB:   " .. heartbeatText,
+        wsConnected and colors.lime or colors.red
+    )
+
+    local ready = 0
+    local pulling = 0
+    local pulled = 0
+    local empty = 0
+
+    for _, entry in pairs(chambers) do
+        if entry.status == "ready" then
+            ready = ready + 1
+        elseif entry.status == "pulling" then
+            pulling = pulling + 1
+        elseif entry.status == "pulled" then
+            pulled = pulled + 1
+        elseif entry.status == "empty" then
+            empty = empty + 1
+        end
+    end
+
+    MONITOR.setCursorPos(1, 5)
+    writeLine(
+        "C:" .. tostring(#RELAYS) ..
+        " R:" .. tostring(ready) ..
+        " P:" .. tostring(pulling) ..
+        " D:" .. tostring(pulled) ..
+        " E:" .. tostring(empty)
+    )
+
+    MONITOR.setCursorPos(1, 6)
+    writeLine(string.rep("-", width), colors.gray)
+
+    local row = 7
+
+    for _, relay in ipairs(RELAYS) do
+        if row > height then
+            break
+        end
+
+        local chamber = chambers[relay.chamber] or {
+            player = relay.player,
+            status = "unknown"
+        }
+
+        local prefix = string.format("%02d ", relay.chamber)
+        local nameWidth = math.max(1, width - #prefix - 8)
+
+        local line =
+            prefix ..
+            fit(chamber.player or relay.player, nameWidth) ..
+            " " ..
+            string.upper(string.sub(chamber.status or "unknown", 1, 7))
+
+        MONITOR.setCursorPos(1, row)
+        MONITOR.setTextColor(statusColor(chamber.status))
+        MONITOR.write(fit(line, width))
+
+        row = row + 1
+    end
+
+    if lastError and row <= height then
+        MONITOR.setCursorPos(1, row)
+        MONITOR.setTextColor(colors.red)
+        MONITOR.write(fit("ERR: " .. lastError, width))
+    end
+end
+
+local function clearPulledStatus(chamber)
+    local entry = chambers[chamber]
+
+    if entry and entry.status == "pulled" then
+        entry.status = "ready"
+        entry.statusSince = os.epoch("utc")
+        entry.pulledUntil = nil
+        entry.pulledTimer = nil
+    end
+end
+
+local function setChamberStatus(chamber, player, status, label)
+    chamber = tonumber(chamber)
+
+    if not chamber then
+        return
+    end
+
+    local entry = chambers[chamber] or {
+        player = player or "",
+        label = label or ("Chamber " .. string.format("%02d", chamber)),
+        status = "empty"
+    }
+
+    if player ~= nil and player ~= "" then
+        entry.player = player
+    end
+
+    if label and label ~= "" then
+        entry.label = label
+    end
+
+    entry.status = status
+    entry.statusSince = os.epoch("utc")
+    chambers[chamber] = entry
+
+    if status == "pulled" then
+        entry.pulledUntil = os.epoch("utc") + (PULLED_DISPLAY_TIME * 1000)
+        entry.pulledTimer = os.startTimer(PULLED_DISPLAY_TIME)
+    else
+        entry.pulledUntil = nil
+        entry.pulledTimer = nil
+    end
+
+    drawMonitor()
 end
 
 local function sendStatus(ws, chamber, player, status)
@@ -97,9 +304,7 @@ local function pulseRelay(relayName)
 
     local ok, pulseError = pcall(function()
         relay.setOutput("front", true)
-
         sleep(PULSE_TIME)
-
         relay.setOutput("front", false)
     end)
 
@@ -143,6 +348,7 @@ local function handlePull(ws, command)
             ")"
         )
 
+        setChamberStatus(chamber, player, "ready")
         sendStatus(ws, chamber, player, "ready")
 
         sendMessage(ws, {
@@ -162,11 +368,13 @@ local function handlePull(ws, command)
     print("  Chamber: " .. chamber)
     print("  Relay:   " .. entry.relay)
 
+    setChamberStatus(chamber, player, "pulling")
     sendStatus(ws, chamber, player, "pulling")
 
     local success, pulseError = pulseRelay(entry.relay)
 
     if success then
+        setChamberStatus(chamber, player, "pulled")
         sendStatus(ws, chamber, player, "pulled")
 
         sendMessage(ws, {
@@ -179,6 +387,7 @@ local function handlePull(ws, command)
 
         print("  Result:  pulled")
     else
+        setChamberStatus(chamber, player, "ready")
         sendStatus(ws, chamber, player, "ready")
 
         sendMessage(ws, {
@@ -206,6 +415,12 @@ local function announceConfiguredPlayers(ws)
                 entry.relay
             )
 
+            setChamberStatus(
+                entry.chamber,
+                entry.player,
+                "ready"
+            )
+
             sendStatus(
                 ws,
                 entry.chamber,
@@ -218,6 +433,12 @@ local function announceConfiguredPlayers(ws)
                 entry.relay ..
                 " for " ..
                 entry.player
+            )
+
+            setChamberStatus(
+                entry.chamber,
+                entry.player,
+                "empty"
             )
 
             sendStatus(
@@ -241,6 +462,17 @@ local function connect()
     return http.websocket(url)
 end
 
+local function sendHeartbeat(ws)
+    heartbeatId = heartbeatId + 1
+    heartbeatSentAt = os.epoch("utc")
+    heartbeatPending = true
+
+    return sendMessage(ws, {
+        type = "heartbeat",
+        id = heartbeatId
+    })
+end
+
 while true do
     term.clear()
     term.setCursorPos(1, 1)
@@ -251,19 +483,38 @@ while true do
     print("Controller: " .. CONTROLLER_NAME)
     print("Base:       " .. tostring(BASE_ID))
     print("Server:     " .. SERVER)
+    print("Monitor:    " .. (MONITOR and "found" or "not found"))
     print("")
+
+    wsConnected = false
+    heartbeatPending = false
+    drawMonitor()
 
     local ws, err = connect()
 
     if not ws then
-        print("Connection failed: " .. tostring(err))
+        lastError = tostring(err)
+        drawMonitor()
+
+        print("Connection failed: " .. lastError)
         print("Retrying in 5 seconds...")
         sleep(5)
     else
+        wsConnected = true
+        heartbeatPending = false
+        lastHeartbeatAck = 0
+        lastError = nil
+
         print("Connected to Stasis Control")
         print("")
 
+        drawMonitor()
         announceConfiguredPlayers(ws)
+        sendHeartbeat(ws)
+
+        local heartbeatTimer = os.startTimer(HEARTBEAT_INTERVAL)
+        local heartbeatCheckTimer = os.startTimer(1)
+        local displayTimer = os.startTimer(DISPLAY_REFRESH)
 
         while true do
             local event, a, b = os.pullEvent()
@@ -279,18 +530,102 @@ while true do
                 if ok and message then
                     if message.type == "pull" then
                         handlePull(ws, message)
+
+                    elseif message.type == "heartbeat-ack" then
+                        if message.id == heartbeatId or message.id == nil then
+                            heartbeatPending = false
+                            lastHeartbeatAck = os.epoch("utc")
+                            lastError = nil
+                            drawMonitor()
+                        end
                     end
                 end
 
             elseif event == "websocket_closed" then
+                wsConnected = false
+                heartbeatPending = false
+                lastError = "WebSocket closed"
+                drawMonitor()
                 print("Connection closed")
                 break
+
+            elseif event == "timer" then
+                if a == heartbeatTimer then
+                    heartbeatTimer = os.startTimer(HEARTBEAT_INTERVAL)
+
+                    if heartbeatPending then
+                        lastError = "Heartbeat timeout"
+                        print("Heartbeat timeout")
+                        wsConnected = false
+                        heartbeatPending = false
+
+                        pcall(function()
+                            ws.close()
+                        end)
+
+                        drawMonitor()
+                        break
+                    end
+
+                    if not sendHeartbeat(ws) then
+                        wsConnected = false
+
+                        pcall(function()
+                            ws.close()
+                        end)
+
+                        drawMonitor()
+                        break
+                    end
+
+                elseif a == heartbeatCheckTimer then
+                    heartbeatCheckTimer = os.startTimer(1)
+
+                    if heartbeatPending and
+                       os.epoch("utc") - heartbeatSentAt > (HEARTBEAT_TIMEOUT * 1000) then
+                        lastError = "Heartbeat timeout"
+                        print("Heartbeat timeout")
+                        wsConnected = false
+                        heartbeatPending = false
+
+                        pcall(function()
+                            ws.close()
+                        end)
+
+                        drawMonitor()
+                        break
+                    end
+
+                elseif a == displayTimer then
+                    for chamber, entry in pairs(chambers) do
+                        if entry.status == "pulled" and
+                           entry.pulledUntil and
+                           os.epoch("utc") >= entry.pulledUntil then
+                            clearPulledStatus(chamber)
+                        end
+                    end
+
+                    drawMonitor()
+                    displayTimer = os.startTimer(DISPLAY_REFRESH)
+
+                else
+                    for chamber, entry in pairs(chambers) do
+                        if entry.pulledTimer == a then
+                            clearPulledStatus(chamber)
+                            drawMonitor()
+                        end
+                    end
+                end
             end
         end
 
         pcall(function()
             ws.close()
         end)
+
+        wsConnected = false
+        heartbeatPending = false
+        drawMonitor()
 
         print("Reconnecting in 2 seconds...")
         sleep(2)
