@@ -1,9 +1,12 @@
 require("dotenv").config();
 
+const dns = require("dns");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
+
+dns.setDefaultResultOrder("ipv4first");
 const { monitorEventLoopDelay } = require("perf_hooks");
 
 const {
@@ -138,6 +141,34 @@ function logInteractionTiming(interaction) {
   return ageMs;
 }
 
+
+async function testDiscordRest() {
+  const started = Date.now();
+
+  try {
+    const response = await fetch(
+      "https://discord.com/api/v10/gateway",
+      {
+        signal: AbortSignal.timeout(2000)
+      }
+    );
+
+    console.log(
+      "[Discord] REST connectivity:",
+      response.status,
+      Date.now() - started + "ms",
+      "DNS order=ipv4first"
+    );
+  } catch (error) {
+    console.error(
+      "[Discord] REST connectivity check failed:",
+      {
+        error: error?.message || String(error),
+        durationMs: Date.now() - started
+      }
+    );
+  }
+}
 
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
@@ -840,6 +871,11 @@ client.once("clientReady", async () => {
   console.log(
     "Whisper model: " + WHISPER_MODEL_PATH
   );
+  console.log(
+    "DNS result order: " + dns.getDefaultResultOrder()
+  );
+
+  void testDiscordRest();
 
   if (!fs.existsSync(WHISPER_CLI_PATH)) {
     console.error(
