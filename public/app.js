@@ -384,7 +384,7 @@ async function saveConfig() {
 
     if (!response.ok) {
       $("configStatus").textContent =
-        result.error || "Unable to save configuration.";
+        result.error || result.detail || "Unable to save configuration.";
       return;
     }
 
@@ -393,8 +393,9 @@ async function saveConfig() {
     $("configStatus").textContent =
       "Saved. Discord /pull will use Base " + result.defaultBase + " for " + player + ".";
     toast("Default base saved");
-  } catch {
-    $("configStatus").textContent = "Unable to contact server.";
+  } catch (error) {
+    $("configStatus").textContent =
+      "Unable to contact server: " + (error.message || "network error");
   } finally {
     $("configSave").disabled = false;
   }
