@@ -1,7 +1,10 @@
 require("dotenv").config();
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
+const { spawn } = require("child_process");
+
 const {
   Client,
   GatewayIntentBits,
@@ -19,7 +22,6 @@ const {
 } = require("@discordjs/voice");
 
 const prism = require("prism-media");
-const vosk = require("vosk");
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
@@ -31,14 +33,29 @@ const STASIS_API_URL = (
 const PULL_API_TOKEN =
   process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN;
 
-const VOSK_MODEL_PATH =
-  process.env.VOSK_MODEL_PATH ||
+const WHISPER_CLI_PATH =
+  process.env.WHISPER_CLI_PATH ||
+  path.join(
+    __dirname,
+    "..",
+    "whisper.cpp",
+    "build",
+    "bin",
+    "whisper-cli"
+  );
+
+const WHISPER_MODEL_PATH =
+  process.env.WHISPER_MODEL_PATH ||
   path.join(
     __dirname,
     "..",
     "models",
-    "vosk-model-small-en-us-0.15"
+    "ggml-tiny.en.bin"
   );
+
+const WHISPER_THREADS = String(
+  process.env.WHISPER_THREADS || "4"
+);
 
 const VOICE_TRIGGER = (
   process.env.VOICE_TRIGGER || "Farex pull my pearl"
@@ -69,11 +86,15 @@ const pullCommand = new SlashCommandBuilder()
 
 const joinCommand = new SlashCommandBuilder()
   .setName("join")
-  .setDescription("Join your voice channel and listen for the pearl voice command");
+  .setDescription(
+    "Join your voice channel and listen for the pearl voice command"
+  );
 
 const leaveCommand = new SlashCommandBuilder()
   .setName("leave")
-  .setDescription("Leave the current voice channel and stop listening");
+  .setDescription(
+    "Leave the current voice channel and stop listening"
+  );
 
 const commands = [
   pullCommand.toJSON(),
@@ -91,28 +112,6 @@ const client = new Client({
 const voiceSessions = new Map();
 let cachedPlayers = [];
 let refreshingPlayers = false;
-let voskModel = null;
-
-function loadVoskModel() {
-  if (voskModel) {
-    return voskModel;
-  }
-
-  if (!fs.existsSync(VOSK_MODEL_PATH)) {
-    throw new Error(
-      "Vosk model not found at " +
-        VOSK_MODEL_PATH +
-        ". Run bot/download-model.sh or set VOSK_MODEL_PATH."
-    );
-  }
-
-  vosk.setLogLevel(0);
-  console.log("[STT] Loading Vosk model from " + VOSK_MODEL_PATH);
-  voskModel = new vosk.Model(VOSK_MODEL_PATH);
-  console.log("[STT] Vosk model loaded");
-
-  return voskModel;
-}
 
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
@@ -126,14 +125,18 @@ async function registerCommands() {
       { body: commands }
     );
 
-    console.log("Registered /pull, /join and /leave as guild commands");
+    console.log(
+      "Registered /pull, /join and /leave as guild commands"
+    );
   } else {
     await rest.put(
       Routes.applicationCommands(DISCORD_CLIENT_ID),
       { body: commands }
     );
 
-    console.log("Registered /pull, /join and /leave as global commands");
+    console.log(
+      "Registered /pull, /join and /leave as global commands"
+    );
   }
 }
 
@@ -143,7 +146,9 @@ async function getState() {
   });
 
   if (!response.ok) {
-    throw new Error("Stasis API returned HTTP " + response.status);
+    throw new Error(
+      "Stasis API returned HTTP " + response.status
+    );
   }
 
   return response.json();
@@ -174,7 +179,10 @@ async function refreshPlayers() {
     const state = await getState();
     cachedPlayers = uniquePlayers(state);
   } catch (error) {
-    console.error("[Discord] player cache refresh failed:", error.message);
+    console.error(
+      "[Discord] player cache refresh failed:",
+      error.message
+    );
   } finally {
     refreshingPlayers = false;
   }
@@ -184,11 +192,12 @@ async function safeAutocompleteRespond(interaction, choices) {
   try {
     await interaction.respond(choices);
   } catch (error) {
-    if (error?.code === 10062) {
-      return;
-    }
+    if (error?.code === 10062) return;
 
-    console.error("[Discord] autocomplete response failed:", error);
+    console.error(
+      "[Discord] autocomplete response failed:",
+      error
+    );
   }
 }
 
@@ -205,20 +214,26 @@ function phraseMatches(text) {
 }
 
 async function pullPlayer(player) {
-  const response = await fetch(STASIS_API_URL + "/api/pull-player", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Stasis-Pull-Token": PULL_API_TOKEN
-    },
-    body: JSON.stringify({ player }),
-    signal: AbortSignal.timeout(5000)
-  });
+  const response = await fetch(
+    STASIS_API_URL + "/api/pull-player",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Stasis-Pull-Token": PULL_API_TOKEN
+      },
+      body: JSON.stringify({ player }),
+      signal: AbortSignal.timeout(5000)
+    }
+  );
 
   const result = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    const error = new Error(result.error || "Pull failed");
+    const error = new Error(
+      result.error || "Pull failed"
+    );
+
     error.status = response.status;
     error.availableBases = result.availableBases;
     throw error;
@@ -227,12 +242,148 @@ async function pullPlayer(player) {
   return result;
 }
 
+function writeWav(filePath, pcm) {
+  const sampleRate = 16000;
+  const channels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * channels * bitsPerSample / 8;
+  const blockAlign = channels * bitsPerSample / 8;
+
+  const header = Buffer.alloc(44);
+
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+
+  fs.writeFileSync(
+    filePath,
+    Buffer.concat([header, pcm])
+  );
+}
+
+function runWhisper(wavPath) {
+  return new Promise((resolve, reject) => {
+    if (!fs.existsSync(WHISPER_CLI_PATH)) {
+      reject(
+        new Error(
+          "whisper-cli not found at " +
+            WHISPER_CLI_PATH +
+            ". Run bot/setup-whisper.sh or set WHISPER_CLI_PATH."
+        )
+      );
+      return;
+    }
+
+    if (!fs.existsSync(WHISPER_MODEL_PATH)) {
+      reject(
+        new Error(
+          "Whisper model not found at " +
+            WHISPER_MODEL_PATH +
+            ". Run bot/setup-whisper.sh or set WHISPER_MODEL_PATH."
+        )
+      );
+      return;
+    }
+
+    const args = [
+      "-m",
+      WHISPER_MODEL_PATH,
+      "-f",
+      wavPath,
+      "-l",
+      "en",
+      "-nt",
+      "-np",
+      "-t",
+      WHISPER_THREADS
+    ];
+
+    const process = spawn(
+      WHISPER_CLI_PATH,
+      args,
+      {
+        stdio: ["ignore", "pipe", "pipe"]
+      }
+    );
+
+    let stdout = "";
+    let stderr = "";
+
+    process.stdout.on("data", chunk => {
+      stdout += chunk.toString();
+    });
+
+    process.stderr.on("data", chunk => {
+      stderr += chunk.toString();
+    });
+
+    process.on("error", error => {
+      reject(error);
+    });
+
+    process.on("close", code => {
+      const text = stdout
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .join(" ");
+
+      if (code !== 0) {
+        reject(
+          new Error(
+            "whisper-cli exited with code " +
+              code +
+              (stderr.trim()
+                ? ": " + stderr.trim().slice(-500)
+                : "")
+          )
+        );
+        return;
+      }
+
+      resolve(normalizeSpeech(text));
+    });
+  });
+}
+
+async function transcribePcm(pcm) {
+  if (!pcm.length) return "";
+
+  const tempPath = path.join(
+    os.tmpdir(),
+    "stasis-voice-" +
+      process.pid +
+      "-" +
+      Date.now() +
+      "-" +
+      Math.random().toString(36).slice(2) +
+      ".wav"
+  );
+
+  try {
+    writeWav(tempPath, pcm);
+    return await runWhisper(tempPath);
+  } finally {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch {}
+  }
+}
+
 function destroyVoiceSession(guildId) {
   const session = voiceSessions.get(guildId);
 
-  if (!session) {
-    return;
-  }
+  if (!session) return;
 
   for (const stream of session.streams.values()) {
     stream.destroy();
@@ -247,38 +398,19 @@ function destroyVoiceSession(guildId) {
 }
 
 function startSpeechStream(session, userId) {
-  if (userId !== session.listenerUserId) {
-    return;
-  }
+  if (userId !== session.listenerUserId) return;
+  if (session.triggered) return;
+  if (session.streams.has(userId)) return;
 
-  if (session.triggered) {
-    return;
-  }
-
-  if (session.streams.has(userId)) {
-    return;
-  }
-
-  let model;
-
-  try {
-    model = loadVoskModel();
-  } catch (error) {
-    console.error("[STT] " + error.message);
-    return;
-  }
-
-  const recognizer = new vosk.Recognizer({
-    model,
-    sampleRate: 16000
-  });
-
-  const opusStream = session.connection.receiver.subscribe(userId, {
-    end: {
-      behavior: EndBehaviorType.AfterSilence,
-      duration: 900
+  const opusStream = session.connection.receiver.subscribe(
+    userId,
+    {
+      end: {
+        behavior: EndBehaviorType.AfterSilence,
+        duration: 900
+      }
     }
-  });
+  );
 
   const decoder = new prism.opus.Decoder({
     rate: 16000,
@@ -286,113 +418,119 @@ function startSpeechStream(session, userId) {
     frameSize: 960
   });
 
-  const state = {
-    recognizer,
+  const chunks = [];
+
+  const streamState = {
     opusStream,
-    decoder
+    decoder,
+    chunks
   };
 
-  session.streams.set(userId, state);
+  session.streams.set(userId, streamState);
 
   console.log(
     "[STT] Listening to user " +
-      userId +
+      session.listenerName +
       " for \"" +
       VOICE_TRIGGER +
       "\""
   );
 
-  const checkText = async text => {
-    const normalized = normalizeSpeech(text);
-
-    if (!normalized) {
-      return false;
-    }
-
-    console.log("[STT] " + userId + ": " + normalized);
-
-    if (!session.triggered && phraseMatches(normalized)) {
-      session.triggered = true;
-
-      console.log(
-        "[STT] Trigger detected: \"" +
-          VOICE_TRIGGER +
-          "\" -> pulling " +
-          VOICE_TRIGGER_PLAYER
-      );
-
-      try {
-        const result = await pullPlayer(VOICE_TRIGGER_PLAYER);
-
-        console.log(
-          "[STT] Pull sent for " +
-            result.player +
-            " from Base " +
-            result.base +
-            " / Chamber " +
-            String(result.chamber).padStart(2, "0")
-        );
-      } catch (error) {
-        console.error(
-          "[STT] Voice pull failed:",
-          error.message
-        );
-      }
-
-      return true;
-    }
-
-    return false;
-  };
-
   decoder.on("data", data => {
-    if (session.triggered) {
-      return;
-    }
-
-    try {
-      const done = recognizer.acceptWaveform(data);
-
-      if (done) {
-        const result = JSON.parse(recognizer.result());
-        void checkText(result.text);
-      } else {
-        const partial = JSON.parse(recognizer.partialResult());
-        void checkText(partial.partial);
-      }
-    } catch (error) {
-      console.error("[STT] Recognition error:", error.message);
+    if (!session.triggered) {
+      chunks.push(Buffer.from(data));
     }
   });
 
-  const cleanup = () => {
-    if (session.streams.get(userId) !== state) {
+  const cleanup = async () => {
+    if (session.streams.get(userId) !== streamState) {
+      return;
+    }
+
+    session.streams.delete(userId);
+
+    const pcm = Buffer.concat(chunks);
+
+    if (!pcm.length || session.triggered) {
       return;
     }
 
     try {
-      const finalResult = JSON.parse(recognizer.finalResult());
-      void checkText(finalResult.text);
+      const text = await transcribePcm(pcm);
+
+      if (!text) {
+        return;
+      }
+
+      console.log(
+        "[STT] " +
+          session.listenerName +
+          ": " +
+          text
+      );
+
+      if (!session.triggered && phraseMatches(text)) {
+        session.triggered = true;
+
+        console.log(
+          "[STT] Trigger detected: \"" +
+            VOICE_TRIGGER +
+            "\" -> pulling " +
+            VOICE_TRIGGER_PLAYER
+        );
+
+        try {
+          const result = await pullPlayer(
+            VOICE_TRIGGER_PLAYER
+          );
+
+          console.log(
+            "[STT] Pull sent for " +
+              result.player +
+              " from Base " +
+              result.base +
+              " / Chamber " +
+              String(result.chamber).padStart(2, "0")
+          );
+        } catch (error) {
+          console.error(
+            "[STT] Voice pull failed:",
+            error.message
+          );
+
+          session.triggered = false;
+        }
+      }
     } catch (error) {
-      console.error("[STT] Final recognition error:", error.message);
+      console.error(
+        "[STT] Transcription failed:",
+        error.message
+      );
     }
-
-    try {
-      recognizer.free();
-    } catch {}
-
-    session.streams.delete(userId);
   };
 
-  decoder.on("end", cleanup);
-  decoder.on("close", cleanup);
+  decoder.on("end", () => {
+    void cleanup();
+  });
+
+  decoder.on("close", () => {
+    void cleanup();
+  });
+
   decoder.on("error", error => {
-    console.error("[STT] Decoder error:", error.message);
-    cleanup();
+    console.error(
+      "[STT] Decoder error:",
+      error.message
+    );
+
+    void cleanup();
   });
 
   opusStream.on("error", error => {
-    console.error("[STT] Voice receive error:", error.message);
+    console.error(
+      "[STT] Voice receive error:",
+      error.message
+    );
   });
 
   opusStream.pipe(decoder);
@@ -409,7 +547,9 @@ async function joinVoice(interaction) {
     throw new Error("That is not a voice channel.");
   }
 
-  const existing = voiceSessions.get(interaction.guildId);
+  const existing = voiceSessions.get(
+    interaction.guildId
+  );
 
   if (existing) {
     destroyVoiceSession(interaction.guildId);
@@ -423,7 +563,11 @@ async function joinVoice(interaction) {
     selfMute: true
   });
 
-  await entersState(connection, VoiceConnectionStatus.Ready, 15000);
+  await entersState(
+    connection,
+    VoiceConnectionStatus.Ready,
+    15000
+  );
 
   const session = {
     guildId: interaction.guildId,
@@ -438,12 +582,18 @@ async function joinVoice(interaction) {
   voiceSessions.set(interaction.guildId, session);
 
   connection.on("error", error => {
-    console.error("[VOICE] Connection error:", error.message);
+    console.error(
+      "[VOICE] Connection error:",
+      error.message
+    );
   });
 
-  connection.receiver.speaking.on("start", userId => {
-    startSpeechStream(session, userId);
-  });
+  connection.receiver.speaking.on(
+    "start",
+    userId => {
+      startSpeechStream(session, userId);
+    }
+  );
 
   return session;
 }
@@ -451,17 +601,25 @@ async function joinVoice(interaction) {
 client.on("interactionCreate", async interaction => {
   if (interaction.isAutocomplete()) {
     const query =
-      interaction.options.getString("player")?.toLowerCase() || "";
+      interaction.options
+        .getString("player")
+        ?.toLowerCase() || "";
 
     const choices = cachedPlayers
-      .filter(player => player.toLowerCase().includes(query))
+      .filter(player =>
+        player.toLowerCase().includes(query)
+      )
       .slice(0, 25)
       .map(player => ({
         name: player,
         value: player
       }));
 
-    await safeAutocompleteRespond(interaction, choices);
+    await safeAutocompleteRespond(
+      interaction,
+      choices
+    );
+
     void refreshPlayers();
     return;
   }
@@ -471,7 +629,10 @@ client.on("interactionCreate", async interaction => {
   }
 
   if (interaction.commandName === "pull") {
-    const player = interaction.options.getString("player", true);
+    const player = interaction.options.getString(
+      "player",
+      true
+    );
 
     await interaction.deferReply({
       flags: MessageFlags.Ephemeral
@@ -490,7 +651,8 @@ client.on("interactionCreate", async interaction => {
           "**."
       );
     } catch (error) {
-      let message = error.message || "Pull failed.";
+      let message =
+        error.message || "Pull failed.";
 
       if (
         Array.isArray(error.availableBases) &&
@@ -502,7 +664,9 @@ client.on("interactionCreate", async interaction => {
           ". Set the player's default base in the Stasis Control dashboard.";
       }
 
-      await interaction.editReply("❌ " + message);
+      await interaction.editReply(
+        "❌ " + message
+      );
     }
 
     return;
@@ -514,7 +678,9 @@ client.on("interactionCreate", async interaction => {
     });
 
     try {
-      const session = await joinVoice(interaction);
+      const session = await joinVoice(
+        interaction
+      );
 
       await interaction.editReply(
         "🎙️ Joined <#" +
@@ -528,7 +694,10 @@ client.on("interactionCreate", async interaction => {
           "**."
       );
     } catch (error) {
-      console.error("[VOICE] Join failed:", error);
+      console.error(
+        "[VOICE] Join failed:",
+        error
+      );
 
       if (voiceSessions.has(interaction.guildId)) {
         destroyVoiceSession(interaction.guildId);
@@ -547,25 +716,45 @@ client.on("interactionCreate", async interaction => {
     destroyVoiceSession(interaction.guildId);
 
     await interaction.reply({
-      content: "👋 Left the voice channel and stopped listening.",
+      content:
+        "👋 Left the voice channel and stopped listening.",
       flags: MessageFlags.Ephemeral
     });
   }
 });
 
 client.once("clientReady", async () => {
-  console.log("Discord bot logged in as " + client.user.tag);
-  console.log("Using Stasis API: " + STASIS_API_URL);
-  console.log("Voice trigger: " + VOICE_TRIGGER);
-  console.log("Voice trigger player: " + VOICE_TRIGGER_PLAYER);
+  console.log(
+    "Discord bot logged in as " +
+      client.user.tag
+  );
+  console.log(
+    "Using Stasis API: " + STASIS_API_URL
+  );
+  console.log(
+    "Voice trigger: " + VOICE_TRIGGER
+  );
+  console.log(
+    "Voice trigger player: " +
+      VOICE_TRIGGER_PLAYER
+  );
+  console.log(
+    "Whisper CLI: " + WHISPER_CLI_PATH
+  );
+  console.log(
+    "Whisper model: " + WHISPER_MODEL_PATH
+  );
 
-  try {
-    loadVoskModel();
-  } catch (error) {
-    console.error("[STT] " + error.message);
+  if (!fs.existsSync(WHISPER_CLI_PATH)) {
     console.error(
-      "[STT] Voice recognition will remain disabled until the model is installed."
+      "[STT] whisper-cli is not installed. Run bot/setup-whisper.sh."
     );
+  } else if (!fs.existsSync(WHISPER_MODEL_PATH)) {
+    console.error(
+      "[STT] Whisper model is not installed. Run bot/setup-whisper.sh."
+    );
+  } else {
+    console.log("[STT] Whisper STT is ready");
   }
 
   await refreshPlayers();
@@ -575,35 +764,17 @@ client.once("clientReady", async () => {
   }, 10000);
 });
 
-process.on("SIGINT", () => {
+function shutdown() {
   for (const guildId of [...voiceSessions.keys()]) {
     destroyVoiceSession(guildId);
   }
 
-  if (voskModel) {
-    try {
-      voskModel.free();
-    } catch {}
-  }
-
   client.destroy();
   process.exit(0);
-});
+}
 
-process.on("SIGTERM", () => {
-  for (const guildId of [...voiceSessions.keys()]) {
-    destroyVoiceSession(guildId);
-  }
-
-  if (voskModel) {
-    try {
-      voskModel.free();
-    } catch {}
-  }
-
-  client.destroy();
-  process.exit(0);
-});
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 (async () => {
   await registerCommands();
