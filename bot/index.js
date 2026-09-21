@@ -437,36 +437,7 @@ async function pullPlayer(player) {
   return result;
 }
 
-function writeWav(filePath, pcm) {
-  const sampleRate = 16000;
-  const channels = 1;
-  const bitsPerSample = 16;
-  const byteRate = sampleRate * channels * bitsPerSample / 8;
-  const blockAlign = channels * bitsPerSample / 8;
-
-  const header = Buffer.alloc(44);
-
-  header.write("RIFF", 0);
-  header.writeUInt32LE(36 + pcm.length, 4);
-  header.write("WAVE", 8);
-  header.write("fmt ", 12);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(channels, 22);
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(byteRate, 28);
-  header.writeUInt16LE(blockAlign, 32);
-  header.writeUInt16LE(bitsPerSample, 34);
-  header.write("data", 36);
-  header.writeUInt32LE(pcm.length, 40);
-
-  fs.writeFileSync(
-    filePath,
-    Buffer.concat([header, pcm])
-  );
-}
-
-function runWhisper(wavPath) {
+function runWhisper(audioPath) {
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(WHISPER_CLI_PATH)) {
       reject(
@@ -494,7 +465,7 @@ function runWhisper(wavPath) {
       "-m",
       WHISPER_MODEL_PATH,
       "-f",
-      wavPath,
+      audioPath,
       "-l",
       "en",
       "-nt",
@@ -505,14 +476,17 @@ function runWhisper(wavPath) {
       WHISPER_BEAM_SIZE,
       "-bo",
       WHISPER_BEST_OF,
+      "-tp",
+      "0",
+      "-nf",
       "-mc",
       "0",
-      "--suppress-nst",
+      "-sns",
       "--prompt",
       WHISPER_PROMPT
     ];
 
-    const process = spawn(
+    const child = spawn(
       WHISPER_CLI_PATH,
       args,
       {
@@ -523,19 +497,17 @@ function runWhisper(wavPath) {
     let stdout = "";
     let stderr = "";
 
-    process.stdout.on("data", chunk => {
+    child.stdout.on("data", chunk => {
       stdout += chunk.toString();
     });
 
-    process.stderr.on("data", chunk => {
+    child.stderr.on("data", chunk => {
       stderr += chunk.toString();
     });
 
-    process.on("error", error => {
-      reject(error);
-    });
+    child.on("error", reject);
 
-    process.on("close", code => {
+    child.on("close", code => {
       const text = stdout
         .split(/\r?\n/)
         .map(line => line.trim())
@@ -560,8 +532,10 @@ function runWhisper(wavPath) {
   });
 }
 
-async function transcribePcm(pcm) {
-  if (!pcm.length) return "";
+async function transcribeOgg(oggData) {
+  if (!oggData || !oggData.length) {
+    return "";
+  }
 
   const tempPath = path.join(
     os.tmpdir(),
@@ -571,11 +545,18 @@ async function transcribePcm(pcm) {
       Date.now() +
       "-" +
       Math.random().toString(36).slice(2) +
-      ".wav"
+      ".ogg"
   );
 
   try {
-    writeWav(tempPath, pcm);
+    fs.writeFileSync(tempPath, oggData);
+
+    console.log(
+      "[STT] Transcribing " +
+        oggData.length +
+        " bytes of OGG audio"
+    );
+
     return await runWhisper(tempPath);
   } finally {
     try {
@@ -603,31 +584,47 @@ function destroyVoiceSession(guildId) {
 
 function startSpeechStream(session, userId) {
   if (userId !== session.listenerUserId) return;
-  if (session.triggered) return;
-  if (session.streams.has(userId)) return;
+
+  const now = Date.now();
+
+  if (session.cooldownUntil && now < session.cooldownUntil) {
+    return;
+  }
+
+  if (session.streams.has(userId)) {
+    return;
+  }
 
   const opusStream = session.connection.receiver.subscribe(
     userId,
     {
       end: {
         behavior: EndBehaviorType.AfterSilence,
-        duration: 900
+        duration: 1200
       }
     }
   );
 
-  const decoder = new prism.opus.Decoder({
-    rate: 16000,
-    channels: 1,
-    frameSize: 960
+  // Discord voice is 48 kHz Opus stereo. Keep it in a proper OGG container
+  // rather than writing raw decoded PCM with a guessed WAV header. whisper-cli
+  // can decode OGG directly and performs the required audio conversion.
+  const oggStream = new prism.opus.OggLogicalBitstream({
+    opusHead: new prism.opus.OpusHead({
+      channelCount: 2,
+      sampleRate: 48000
+    }),
+    pageSizeControl: {
+      maxPackets: 10
+    }
   });
 
   const chunks = [];
 
   const streamState = {
     opusStream,
-    decoder,
-    chunks
+    oggStream,
+    chunks,
+    cleaned: false
   };
 
   session.streams.set(userId, streamState);
@@ -640,29 +637,29 @@ function startSpeechStream(session, userId) {
       "\""
   );
 
-  decoder.on("data", data => {
-    if (!session.triggered) {
-      chunks.push(Buffer.from(data));
-    }
+  oggStream.on("data", chunk => {
+    chunks.push(Buffer.from(chunk));
   });
 
   const cleanup = async () => {
-    if (session.streams.get(userId) !== streamState) {
-      return;
+    if (streamState.cleaned) return;
+    streamState.cleaned = true;
+
+    if (session.streams.get(userId) === streamState) {
+      session.streams.delete(userId);
     }
 
-    session.streams.delete(userId);
+    const oggData = Buffer.concat(chunks);
 
-    const pcm = Buffer.concat(chunks);
-
-    if (!pcm.length || session.triggered) {
+    if (!oggData.length || session.cooldownUntil > Date.now()) {
       return;
     }
 
     try {
-      const text = await transcribePcm(pcm);
+      const text = await transcribeOgg(oggData);
 
       if (!text) {
+        console.log("[STT] No speech recognized");
         return;
       }
 
@@ -675,44 +672,39 @@ function startSpeechStream(session, userId) {
 
       const matched = phraseMatches(text);
 
-      if (matched) {
-        console.log(
-          "[STT] Trigger candidate matched from transcript: " +
-            text
-        );
+      if (!matched) {
+        return;
       }
 
-      if (!session.triggered && matched) {
-        session.triggered = true;
+      console.log(
+        "[STT] Trigger detected: \"" +
+          VOICE_TRIGGER +
+          "\" -> pulling " +
+          VOICE_TRIGGER_PLAYER
+      );
 
-        console.log(
-          "[STT] Trigger detected: \"" +
-            VOICE_TRIGGER +
-            "\" -> pulling " +
-            VOICE_TRIGGER_PLAYER
+      session.cooldownUntil = Date.now() + 5000;
+
+      try {
+        const result = await pullPlayer(
+          VOICE_TRIGGER_PLAYER
         );
 
-        try {
-          const result = await pullPlayer(
-            VOICE_TRIGGER_PLAYER
-          );
+        console.log(
+          "[STT] Pull sent for " +
+            result.player +
+            " from Base " +
+            result.base +
+            " / Chamber " +
+            String(result.chamber).padStart(2, "0")
+        );
+      } catch (error) {
+        console.error(
+          "[STT] Voice pull failed:",
+          error.message
+        );
 
-          console.log(
-            "[STT] Pull sent for " +
-              result.player +
-              " from Base " +
-              result.base +
-              " / Chamber " +
-              String(result.chamber).padStart(2, "0")
-          );
-        } catch (error) {
-          console.error(
-            "[STT] Voice pull failed:",
-            error.message
-          );
-
-          session.triggered = false;
-        }
+        session.cooldownUntil = Date.now() + 1500;
       }
     } catch (error) {
       console.error(
@@ -722,17 +714,17 @@ function startSpeechStream(session, userId) {
     }
   };
 
-  decoder.on("end", () => {
+  oggStream.on("end", () => {
     void cleanup();
   });
 
-  decoder.on("close", () => {
+  oggStream.on("close", () => {
     void cleanup();
   });
 
-  decoder.on("error", error => {
+  oggStream.on("error", error => {
     console.error(
-      "[STT] Decoder error:",
+      "[STT] OGG stream error:",
       error.message
     );
 
@@ -744,9 +736,11 @@ function startSpeechStream(session, userId) {
       "[STT] Voice receive error:",
       error.message
     );
+
+    void cleanup();
   });
 
-  opusStream.pipe(decoder);
+  opusStream.pipe(oggStream);
 }
 
 async function joinVoice(interaction) {
@@ -984,6 +978,9 @@ client.once("clientReady", async () => {
       WHISPER_BEAM_SIZE +
       "/" +
       WHISPER_BEST_OF
+  );
+  console.log(
+    "Whisper audio input: Discord Opus -> OGG 48kHz stereo"
   );
   console.log(
     "Whisper prompt: " + WHISPER_PROMPT
