@@ -437,7 +437,7 @@ async function pullPlayer(player) {
   return result;
 }
 
-function runWhisper(audioPath) {
+function runWhisper(wavPath) {
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(WHISPER_CLI_PATH)) {
       reject(
@@ -465,7 +465,7 @@ function runWhisper(audioPath) {
       "-m",
       WHISPER_MODEL_PATH,
       "-f",
-      audioPath,
+      wavPath,
       "-l",
       "en",
       "-nt",
@@ -478,7 +478,6 @@ function runWhisper(audioPath) {
       WHISPER_BEST_OF,
       "-tp",
       "0",
-      "-nf",
       "-mc",
       "0",
       "-sns",
@@ -486,13 +485,9 @@ function runWhisper(audioPath) {
       WHISPER_PROMPT
     ];
 
-    const child = spawn(
-      WHISPER_CLI_PATH,
-      args,
-      {
-        stdio: ["ignore", "pipe", "pipe"]
-      }
-    );
+    const child = spawn(WHISPER_CLI_PATH, args, {
+      stdio: ["ignore", "pipe", "pipe"]
+    });
 
     let stdout = "";
     let stderr = "";
@@ -532,8 +527,83 @@ function runWhisper(audioPath) {
   });
 }
 
-async function transcribeOgg(oggData) {
-  if (!oggData || !oggData.length) {
+function convertPcm48StereoTo16Mono(pcm) {
+  const bytesPerFrame = 4;
+  const frameCount = Math.floor(pcm.length / bytesPerFrame);
+
+  if (!frameCount) {
+    return Buffer.alloc(0);
+  }
+
+  const output = Buffer.alloc(
+    Math.floor(frameCount / 3) * 2
+  );
+
+  let outOffset = 0;
+
+  for (let frame = 0; frame + 2 < frameCount; frame += 3) {
+    let sum = 0;
+
+    for (let i = 0; i < 3; i++) {
+      const offset = (frame + i) * bytesPerFrame;
+
+      const left = pcm.readInt16LE(offset);
+      const right = pcm.readInt16LE(offset + 2);
+
+      sum += (left + right) / 2;
+    }
+
+    const mono = Math.max(
+      -32768,
+      Math.min(32767, Math.round(sum / 3))
+    );
+
+    output.writeInt16LE(mono, outOffset);
+    outOffset += 2;
+  }
+
+  return output.subarray(0, outOffset);
+}
+
+function writeWav(filePath, pcm) {
+  const sampleRate = 16000;
+  const channels = 1;
+  const bitsPerSample = 16;
+  const byteRate =
+    sampleRate * channels * bitsPerSample / 8;
+  const blockAlign =
+    channels * bitsPerSample / 8;
+
+  const header = Buffer.alloc(44);
+
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+
+  fs.writeFileSync(
+    filePath,
+    Buffer.concat([header, pcm])
+  );
+}
+
+async function transcribePcm(pcm) {
+  if (!pcm || !pcm.length) {
+    return "";
+  }
+
+  const audio = convertPcm48StereoTo16Mono(pcm);
+
+  if (!audio.length) {
     return "";
   }
 
@@ -545,16 +615,16 @@ async function transcribeOgg(oggData) {
       Date.now() +
       "-" +
       Math.random().toString(36).slice(2) +
-      ".ogg"
+      ".wav"
   );
 
   try {
-    fs.writeFileSync(tempPath, oggData);
+    writeWav(tempPath, audio);
 
     console.log(
       "[STT] Transcribing " +
-        oggData.length +
-        " bytes of OGG audio"
+        audio.length +
+        " bytes of 16 kHz mono WAV"
     );
 
     return await runWhisper(tempPath);
@@ -605,24 +675,17 @@ function startSpeechStream(session, userId) {
     }
   );
 
-  // Discord voice is 48 kHz Opus stereo. Keep it in a proper OGG container
-  // rather than writing raw decoded PCM with a guessed WAV header. whisper-cli
-  // can decode OGG directly and performs the required audio conversion.
-  const oggStream = new prism.opus.OggLogicalBitstream({
-    opusHead: new prism.opus.OpusHead({
-      channelCount: 2,
-      sampleRate: 48000
-    }),
-    pageSizeControl: {
-      maxPackets: 10
-    }
+  const decoder = new prism.opus.Decoder({
+    rate: 48000,
+    channels: 2,
+    frameSize: 960
   });
 
   const chunks = [];
 
   const streamState = {
     opusStream,
-    oggStream,
+    decoder,
     chunks,
     cleaned: false
   };
@@ -637,8 +700,10 @@ function startSpeechStream(session, userId) {
       "\""
   );
 
-  oggStream.on("data", chunk => {
-    chunks.push(Buffer.from(chunk));
+  decoder.on("data", data => {
+    if (!session.triggered) {
+      chunks.push(Buffer.from(data));
+    }
   });
 
   const cleanup = async () => {
@@ -649,14 +714,18 @@ function startSpeechStream(session, userId) {
       session.streams.delete(userId);
     }
 
-    const oggData = Buffer.concat(chunks);
+    const pcm = Buffer.concat(chunks);
 
-    if (!oggData.length || session.cooldownUntil > Date.now()) {
+    if (!pcm.length) {
+      return;
+    }
+
+    if (session.cooldownUntil && Date.now() < session.cooldownUntil) {
       return;
     }
 
     try {
-      const text = await transcribeOgg(oggData);
+      const text = await transcribePcm(pcm);
 
       if (!text) {
         console.log("[STT] No speech recognized");
@@ -714,17 +783,17 @@ function startSpeechStream(session, userId) {
     }
   };
 
-  oggStream.on("end", () => {
+  decoder.on("end", () => {
     void cleanup();
   });
 
-  oggStream.on("close", () => {
+  decoder.on("close", () => {
     void cleanup();
   });
 
-  oggStream.on("error", error => {
+  decoder.on("error", error => {
     console.error(
-      "[STT] OGG stream error:",
+      "[STT] Decoder error:",
       error.message
     );
 
@@ -740,7 +809,16 @@ function startSpeechStream(session, userId) {
     void cleanup();
   });
 
-  opusStream.pipe(oggStream);
+  try {
+    opusStream.pipe(decoder);
+  } catch (error) {
+    console.error(
+      "[STT] Unable to start decoder:",
+      error.message
+    );
+
+    void cleanup();
+  }
 }
 
 async function joinVoice(interaction) {
