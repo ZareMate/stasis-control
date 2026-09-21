@@ -213,7 +213,7 @@ The setup script clones `whisper.cpp`, builds `whisper-cli`, and downloads the c
 The bot listens for a single voice trigger word:
 
 ```text
-pull
+home
 ```
 
 When the trigger is detected, it calls the existing pull API for the player configured by `VOICE_TRIGGER_PLAYER`, using the saved default base.
@@ -221,14 +221,15 @@ When the trigger is detected, it calls the existing pull API for the player conf
 Configure the trigger with:
 
 ```env
-VOICE_TRIGGER=pull
+VOICE_TRIGGER=home
 VOICE_TRIGGER_PLAYER=Farex
+VOICE_SILENCE_MS=450
 WHISPER_CLI_PATH=./whisper.cpp/build/bin/whisper-cli
 WHISPER_MODEL_PATH=./models/ggml-large-v3-turbo.bin
 WHISPER_THREADS=4
 ```
 
-The single-word trigger also tolerates small Whisper transcription errors, such as recognizing `pull` as `pulmai`.
+The single-word trigger also tolerates small Whisper transcription errors. Voice input is finalized after a short silence window (450 ms by default), and Whisper decoding uses a single best candidate with fallback disabled to reduce latency.
 
 The `whisper-cli` tool accepts 16-bit WAV input; the bot converts Discord's decoded PCM stream into a temporary 16-bit, 16 kHz mono WAV file before transcription. citeturn754375search1turn754375search3
 
