@@ -13,7 +13,7 @@ async function load() {
     state = await response.json();
     render();
   } catch {
-    toast("Unable to load dashboard state.");
+    showToast("Unable to load dashboard state.");
   }
 }
 
@@ -54,31 +54,56 @@ function connect() {
     if (message.type === "chamber") {
       if (!state) return;
 
+      if (!Array.isArray(state.chambers)) {
+        state.chambers = [];
+      }
+
+      if (!Array.isArray(state.bases)) {
+        state.bases = [];
+      }
+
+      const chamberState = message.state || {};
+      const chamberKey = String(
+        message.chamber ?? chamberState.key ?? ""
+      );
+
       const chamber = state.chambers.find(
-        item => item.key === message.chamber
+        item => String(item.key) === chamberKey
       );
 
       if (chamber) {
-        Object.assign(chamber, message.state);
+        Object.assign(chamber, chamberState);
       } else {
-        state.chambers.push(message.state);
+        state.chambers.push({
+          ...chamberState,
+          key: chamberState.key || chamberKey
+        });
+      }
 
-        let base = state.bases.find(
-          item => Number(item.id) === Number(message.state.base)
-        );
+      let base = state.bases.find(
+        item => Number(item.id) === Number(chamberState.base)
+      );
 
-        if (!base) {
-          base = {
-            id: message.state.base,
-            name: message.state.baseName || "Base " + message.state.base,
-            chambers: []
-          };
-          state.bases.push(base);
-        }
+      if (!base) {
+        base = {
+          id: chamberState.base,
+          name:
+            chamberState.baseName ||
+            "Base " + chamberState.base,
+          chambers: []
+        };
 
-        if (!base.chambers.includes(message.state.key)) {
-          base.chambers.push(message.state.key);
-        }
+        state.bases.push(base);
+      }
+
+      if (!Array.isArray(base.chambers)) {
+        base.chambers = [];
+      }
+
+      const key = chamberState.key || chamberKey;
+
+      if (!base.chambers.some(item => String(item) === String(key))) {
+        base.chambers.push(key);
       }
 
       if (Number.isInteger(message.playerCount)) {
@@ -111,22 +136,50 @@ function chamberForKey(key) {
 }
 
 function render() {
-  stats();
+  if (!state) return;
+
+  const allChambers = Array.isArray(state.chambers)
+    ? state.chambers
+    : [];
+
+  const bases = Array.isArray(state.bases)
+    ? state.bases
+    : [];
+
+  $("total").textContent = allChambers.length;
+  $("players").textContent = Number.isInteger(state.playerCount)
+    ? state.playerCount
+    : 0;
+  $("basesCount").textContent = bases.length;
 
   const root = $("bases");
   root.innerHTML = "";
 
-  for (const base of state.bases) {
+  for (const base of bases) {
+    const baseChamberKeys = Array.isArray(base.chambers)
+      ? base.chambers.map(value =>
+          typeof value === "object" && value
+            ? value.key
+            : String(value)
+        )
+      : allChambers
+          .filter(chamber =>
+            Number(chamber.base) === Number(base.id)
+          )
+          .map(chamber => chamber.key);
+
+    const uniqueKeys = [...new Set(baseChamberKeys)].filter(Boolean);
+
     const section = document.createElement("section");
 
     section.innerHTML =
       '<div class="base-title">' +
         '<div>' +
           '<span class="eyebrow">STASIS NETWORK</span>' +
-          '<h3>' + esc(base.name) + "</h3>" +
+          '<h3>' + esc(base.name || ("Base " + base.id)) + "</h3>" +
         "</div>" +
         '<span class="base-count">' +
-          base.chambers.length +
+          uniqueKeys.length +
           " CHAMBERS" +
         "</span>" +
       "</div>" +
@@ -134,8 +187,10 @@ function render() {
 
     const grid = section.querySelector(".grid");
 
-    for (const key of base.chambers) {
-      const chamber = chamberForKey(key);
+    for (const key of uniqueKeys) {
+      const chamber = allChambers.find(
+        item => String(item.key) === String(key)
+      );
 
       if (!chamber) continue;
 
@@ -170,13 +225,15 @@ function render() {
           esc(chamber.player || "No player") +
         "</div>" +
         '<div class="label">' +
-          esc(chamber.label) +
+          esc(chamber.label || ("Chamber " + String(chamber.id).padStart(2, "0"))) +
         "</div>" +
         '<button class="pull" ' +
           (canPull ? "" : "disabled") +
         ">PULL PEARL</button>";
 
-      card.querySelector(".pull").onclick = () => openPull(chamber);
+      const button = card.querySelector(".pull");
+      button.onclick = () => openPull(chamber);
+
       grid.appendChild(card);
     }
 
@@ -253,12 +310,12 @@ async function pull() {
     const result = await response.json();
 
     if (!response.ok) {
-      toast(result.error || "Pull failed");
+      showToast(result.error || "Pull failed");
     } else {
-      toast(chamber.player + " pull command sent");
+      showToast(chamber.player + " pull command sent");
     }
   } catch {
-    toast("Unable to contact server");
+    showToast("Unable to contact server");
   } finally {
     $("confirm").disabled = false;
     close();
@@ -392,7 +449,7 @@ async function saveConfig() {
     configBaseFromServer = result.defaultBase;
     $("configStatus").textContent =
       "Saved. Discord /pull will use Base " + result.defaultBase + " for " + player + ".";
-    toast("Default base saved");
+    showToast("Default base saved");
   } catch (error) {
     $("configStatus").textContent =
       "Unable to contact server: " + (error.message || "network error");
