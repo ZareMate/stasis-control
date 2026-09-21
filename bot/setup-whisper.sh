@@ -27,11 +27,23 @@ if [ ! -d "$WHISPER_DIR/.git" ]; then
   git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git "$WHISPER_DIR"
 fi
 
-echo "Building whisper-cli..."
-if [ -n "${WHISPER_CMAKE_ARGS:-}" ]; then
-  cmake -S "$WHISPER_DIR" -B "$WHISPER_DIR/build" $WHISPER_CMAKE_ARGS
+echo "Installing Whisper FFmpeg development libraries..."
+if [ "$(id -u)" -eq 0 ]; then
+  apt-get update
+  apt-get install -y libavcodec-dev libavformat-dev libavutil-dev ffmpeg
 else
-  cmake -S "$WHISPER_DIR" -B "$WHISPER_DIR/build"
+  echo "Not running as root; make sure these packages are installed:"
+  echo "  libavcodec-dev libavformat-dev libavutil-dev ffmpeg"
+fi
+
+echo "Building whisper-cli with FFmpeg support..."
+if [ -n "${WHISPER_CMAKE_ARGS:-}" ]; then
+  cmake -S "$WHISPER_DIR" -B "$WHISPER_DIR/build" \
+    -DWHISPER_COMMON_FFMPEG=ON \
+    $WHISPER_CMAKE_ARGS
+else
+  cmake -S "$WHISPER_DIR" -B "$WHISPER_DIR/build" \
+    -DWHISPER_COMMON_FFMPEG=ON
 fi
 cmake --build "$WHISPER_DIR/build" -j --config Release --target whisper-cli
 
