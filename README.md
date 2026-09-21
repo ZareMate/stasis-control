@@ -1,23 +1,20 @@
 # Stasis Control
 
-Web dashboard for controlling Minecraft ender-pearl stasis chambers through ComputerCraft.
+Web dashboard for controlling Minecraft ender-pearl stasis chambers through ComputerCraft WebSockets.
 
-## Features
+## Architecture
 
-- Modern dark dashboard
-- 3 bases
-- 20 stasis chambers
-- One controller per base
-- Player/chamber configuration
-- One-click PULL PEARL
-- Browser -> Node.js -> ComputerCraft WebSocket communication
-- Live chamber status
-- Live activity log
-- ComputerCraft remains the hardware controller
-- Controller/base routing so a pull only reaches the correct base
-- Controller disconnects mark its chambers offline
-- Initial ComputerCraft status announcements
-- Supports single-chamber status messages and multi-chamber stasis snapshots
+There is **no chamber/base configuration file**.
+
+The server learns everything from connected ComputerCraft controllers:
+
+- Base number and base name
+- Chamber numbers and labels
+- Player names
+- Chamber status
+- Which controller reported each chamber
+
+Multiple controllers can report chambers for the same base. The server combines their reports and counts each chamber only once.
 
 ## Install
 
@@ -33,76 +30,30 @@ npm start
 
 Dashboard: `http://YOUR_SERVER_IP:3000`
 
-## Chamber layout
+## Controller registration
 
-- Base 1: chambers 1-7
-- Base 2: chambers 8-14
-- Base 3: chambers 15-20
-
-Edit `config/chambers.json` to assign players.
-
-## ComputerCraft
-
-Copy `computercraft/stasis.lua` to one ComputerCraft computer per base.
-
-Set:
-
-```lua
-local SERVER = "ws://YOUR_SERVER_IP:3000/ws"
-local TOKEN = "YOUR_STASIS_TOKEN"
-local CONTROLLER_NAME = "base-1"
-local BASE_ID = 1
-```
-
-For the second and third bases, use:
-
-```lua
-local CONTROLLER_NAME = "base-2"
-local BASE_ID = 2
-```
-
-and:
-
-```lua
-local CONTROLLER_NAME = "base-3"
-local BASE_ID = 3
-```
-
-Configure each relay:
-
-```lua
-local RELAYS = {
-    { chamber = 1, player = "Piotrusek69", relay = "redstone_relay_1" },
-    { chamber = 2, player = "Toprak", relay = "redstone_relay_2" }
-}
-```
-
-The controller announces its ready chambers when it connects.
-
-## WebSocket protocol
-
-### Pull
-
-The server sends a pull only to the controller that owns the chamber's base:
+After opening the WebSocket, a ComputerCraft controller sends:
 
 ```json
 {
-  "type": "pull",
+  "type": "register",
+  "controller": "base-1",
   "base": 1,
-  "chamber": 1,
-  "player": "PlayerName",
-  "requestId": "uuid"
+  "baseName": "Base 1"
 }
 ```
 
-### Status
+This registration is sent through WebSocket; it is not stored in server configuration.
 
-ComputerCraft can report individual chambers:
+## Chamber status
+
+Controllers send:
 
 ```json
 {
   "type": "status",
   "chamber": 1,
+  "label": "Chamber 01",
   "player": "PlayerName",
   "status": "ready"
 }
@@ -115,57 +66,55 @@ Supported statuses:
 - `pulling`
 - `pulled`
 
-The server also accepts a multi-chamber snapshot:
+The server also accepts:
 
 ```json
 {
   "type": "stasis",
   "chambers": [
-    { "chamber": 1, "player": "PlayerName", "status": "ready" },
-    { "chamber": 2, "player": "OtherPlayer", "status": "empty" }
+    {
+      "chamber": 1,
+      "label": "Chamber 01",
+      "player": "PlayerName",
+      "status": "ready"
+    }
   ]
 }
 ```
 
-For a status message without a chamber number, the server can resolve the chamber by player name within that controller's base.
+## Dynamic player count
 
-### Pull result
+The dashboard player count is calculated from the chamber reports currently held by connected ComputerCraft controllers.
 
-ComputerCraft should send:
+A chamber counts as one player when it has a reported player and status:
+
+- `ready`
+- `pulling`
+- `pulled`
+
+If multiple controllers report the same chamber, it is counted only once.
+
+If controllers for the same base report different chambers, all of those chambers are combined.
+
+## Pulling
+
+The browser sends:
 
 ```json
 {
-  "type": "pull-result",
-  "chamber": 1,
-  "player": "PlayerName",
-  "requestId": "uuid",
-  "success": true
+  "base": 1,
+  "chamber": 1
 }
 ```
+
+The server routes the pull to the controller that most recently reported that chamber. If that controller is unavailable, another controller for the same base is used.
+
+A `pulled` chamber remains visible as pulled for 5 seconds and then returns to `ready`.
 
 ## Security
 
 Do not commit the real controller token.
 
-Set `STASIS_TOKEN` on the server and use the same value in ComputerCraft. The browser does not receive the controller token.
+Set `STASIS_TOKEN` on the server and use the same value in ComputerCraft. Browser clients do not receive the controller token.
 
-For public deployment, put the dashboard behind HTTPS and an authentication layer before exposing pull controls.
-
-
-## Controller-reported player count
-
-The dashboard player count comes from ComputerCraft controller reports, not from the static chamber configuration.
-
-Controllers can send:
-
-```json
-{"type":"player-count","playerCount":7}
-```
-
-or:
-
-```json
-{"type":"players","players":["PlayerOne","PlayerTwo"]}
-```
-
-The server aggregates the latest count from each connected base controller. When a controller disconnects, its reported count is removed automatically.
+For public deployment, use HTTPS and an authentication layer before exposing pull controls.
