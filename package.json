@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "bot": "node bot/index.js",
+    "bot": "node --dns-result-order=ipv4first bot/index.js",
     "stt:setup": "bash bot/setup-whisper.sh"
   },
   "engines": {
