@@ -20,12 +20,13 @@ const CONTROLLER_TOKEN = process.env.STASIS_TOKEN;
 const PORT = Number(process.env.PORT || 3000);
 const WS_PATH = "/ws";
 
-const DATA_DIR = path.join(ROOT, "data");
+const DATA_DIR = process.env.STASIS_DATA_DIR || path.join(ROOT, "data");
 const PREFERENCES_FILE = path.join(DATA_DIR, "player-preferences.json");
 const PULL_API_TOKEN = process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN || "";
 
 function loadPreferences() {
   try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
     return JSON.parse(fs.readFileSync(PREFERENCES_FILE, "utf8"));
   } catch {
     return {};
@@ -36,11 +37,17 @@ let playerPreferences = loadPreferences();
 
 function savePreferences() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+
+  const tempFile = PREFERENCES_FILE + ".tmp";
+
   fs.writeFileSync(
-    PREFERENCES_FILE,
+    tempFile,
     JSON.stringify(playerPreferences, null, 2) + "\n",
     "utf8"
   );
+
+  fs.renameSync(tempFile, PREFERENCES_FILE);
 }
 
 function playerKey(player) {
@@ -829,42 +836,51 @@ app.get("/api/preference", (req, res) => {
 });
 
 app.post("/api/preference", (req, res) => {
-  const player = String(req.body?.player || "").trim();
-  const defaultBase = Number(req.body?.defaultBase);
+  try {
+    const player = String(req.body?.player || "").trim();
+    const defaultBase = Number(req.body?.defaultBase);
 
-  if (!player) {
-    return res.status(400).json({
-      error: "player is required"
+    if (!player) {
+      return res.status(400).json({
+        error: "player is required"
+      });
+    }
+
+    if (!Number.isInteger(defaultBase) || defaultBase < 0) {
+      return res.status(400).json({
+        error: "defaultBase must be a non-negative integer"
+      });
+    }
+
+    const baseExists = getBaseInfo().has(defaultBase);
+
+    if (!baseExists) {
+      return res.status(404).json({
+        error: "That base is not currently connected"
+      });
+    }
+
+    playerPreferences[playerKey(player)] = {
+      player,
+      defaultBase,
+      updatedAt: new Date().toISOString()
+    };
+
+    savePreferences();
+
+    return res.json({
+      ok: true,
+      player,
+      defaultBase
+    });
+  } catch (error) {
+    console.error("[Preferences] save failed:", error);
+
+    return res.status(500).json({
+      error: "Unable to save player configuration",
+      detail: error instanceof Error ? error.message : String(error)
     });
   }
-
-  if (!Number.isInteger(defaultBase) || defaultBase < 0) {
-    return res.status(400).json({
-      error: "defaultBase must be a non-negative integer"
-    });
-  }
-
-  const baseExists = getBaseInfo().has(defaultBase);
-
-  if (!baseExists) {
-    return res.status(404).json({
-      error: "That base is not currently connected"
-    });
-  }
-
-  playerPreferences[playerKey(player)] = {
-    player,
-    defaultBase,
-    updatedAt: new Date().toISOString()
-  };
-
-  savePreferences();
-
-  res.json({
-    ok: true,
-    player,
-    defaultBase
-  });
 });
 
 app.get("/api/players", (_req, res) => {
