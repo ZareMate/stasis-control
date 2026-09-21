@@ -22,7 +22,7 @@ const WS_PATH = "/ws";
 
 const DATA_DIR = path.join(ROOT, "data");
 const PREFERENCES_FILE = path.join(DATA_DIR, "player-preferences.json");
-const PULL_API_TOKEN = process.env.PULL_API_TOKEN || "";
+const PULL_API_TOKEN = process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN || "";
 
 function loadPreferences() {
   try {
