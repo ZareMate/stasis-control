@@ -62,7 +62,7 @@ const WHISPER_THREADS = String(
 );
 
 const VOICE_TRIGGER = (
-  process.env.VOICE_TRIGGER || "Farex pull my pearl"
+  process.env.VOICE_TRIGGER || "pull"
 )
   .toLowerCase()
   .replace(/[^a-z0-9]+/g, " ")
@@ -430,37 +430,45 @@ function phraseMatches(text) {
   const normalized = normalizeSpeech(text);
   const words = normalized.split(" ").filter(Boolean);
 
-  if (!words.length) {
+  if (!words.length || !VOICE_TRIGGER) {
     return false;
   }
 
-  // Exact transcript still wins.
-  if (normalized.includes(VOICE_TRIGGER)) {
-    return true;
+  // The voice command is intentionally just the trigger word.
+  // Allow small Whisper transcription errors such as "pulmai" for "pull".
+  const triggerWords = VOICE_TRIGGER.split(" ").filter(Boolean);
+
+  if (triggerWords.length === 1) {
+    const trigger = triggerWords[0];
+
+    return words.some(word =>
+      similarWord(word, trigger, 2) ||
+      (trigger.length >= 3 && word.startsWith(trigger.slice(0, 3)))
+    );
   }
 
-  // Whisper commonly turns "Farex" into "ferex"/"parax" and
-  // "pull" into longer fragments such as "pulmai".
-  const farexIndex = matchFarex(words);
+  // Keep support for a custom multi-word trigger, while requiring
+  // the words to appear in order.
+  let searchStart = 0;
 
-  if (farexIndex < 0) {
-    return false;
+  for (const trigger of triggerWords) {
+    let found = -1;
+
+    for (let i = searchStart; i < words.length; i++) {
+      if (similarWord(words[i], trigger, 2)) {
+        found = i;
+        break;
+      }
+    }
+
+    if (found < 0) {
+      return false;
+    }
+
+    searchStart = found + 1;
   }
 
-  const pullIndex = matchPull(words, farexIndex + 1);
-
-  if (pullIndex < 0) {
-    return false;
-  }
-
-  const pearlIndex = matchPearl(words, pullIndex + 1);
-
-  if (pearlIndex < 0) {
-    return false;
-  }
-
-  // Keep the command in natural order: Farex -> pull -> pearl.
-  return farexIndex < pullIndex && pullIndex < pearlIndex;
+  return true;
 }
 
 async function pullPlayer(player) {
@@ -1004,7 +1012,7 @@ client.once("clientReady", async () => {
     "Using Stasis API: " + STASIS_API_URL
   );
   console.log(
-    "Voice trigger: " + VOICE_TRIGGER
+    "Voice trigger word: " + VOICE_TRIGGER
   );
   console.log(
     "Voice trigger player: " +
