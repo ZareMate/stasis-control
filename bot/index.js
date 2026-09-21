@@ -524,8 +524,16 @@ function runWhisper(wavPath) {
       WHISPER_PROMPT
     ];
 
+    console.log(
+      "[STT] Whisper audio decoder: FFmpeg (miniaudio disabled)"
+    );
+
     const child = spawn(WHISPER_CLI_PATH, args, {
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        WHISPER_COMMON_MINIAUDIO_SKIP: "1"
+      }
     });
 
     let stdout = "";
