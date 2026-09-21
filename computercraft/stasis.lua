@@ -1,32 +1,34 @@
 -- Stasis Control ComputerCraft controller
 -- One controller should run for each base.
 --
--- The server tracks chambers by BASE + CHAMBER.
--- The website never sends raw redstone commands.
+-- Base/chamber/player data is sent through WebSocket status reports.
+-- The server does not use a static chamber configuration file.
 
-local SERVER = "ws://YOUR_SERVER_IP:3000/ws"
+local SERVER = "wss://stasis.suchodupin.com/ws"
 local TOKEN = "YOUR_STASIS_TOKEN"
 local CONTROLLER_NAME = "base-1"
 local BASE_ID = 1
 
-local PULSE_TIME = 0.20
+local PULSE_TIME = 1
 
--- Base 1 chamber layout:
+-- Relay 0 is on the right.
 --
 -- LEFT                                      RIGHT
--- Fobablo | Armadillo122 | GRI_9 | 4e6qr | ZareMate | Shark107 | Piotrusek69
--- relay 6 | relay 5       | relay 4| relay 3| relay 2 | relay 1 | relay 0
+-- FcFabio | M1stak3en | EnderiumEnd | Fobablo | Armadillo122 | GRI_9 | 4e6qr | ZareMate | Shark107 | Piotrusek69
+-- relay 26| relay 27  | relay 28     | relay 26 | relay 25      | relay 24| relay 23| relay 22  | relay 21 | relay 20
 --
--- Relay 0 is the chamber on the far right.
+-- Chamber numbering follows the RELAYS table below.
 
 local RELAYS = {
-    { chamber = 1, player = "Piotrusek69", label = "Chamber 01", relay = "redstone_relay_0" },
-    { chamber = 2, player = "Shark107", label = "Chamber 02", relay = "redstone_relay_1" },
-    { chamber = 3, player = "ZareMate", label = "Chamber 03", relay = "redstone_relay_2" },
-    { chamber = 4, player = "4e6qr", label = "Chamber 04", relay = "redstone_relay_3" },
-    { chamber = 5, player = "GRI_9", label = "Chamber 05", relay = "redstone_relay_4" },
-    { chamber = 6, player = "Armadillo122", label = "Chamber 06", relay = "redstone_relay_5" },
-    { chamber = 7, player = "Fobablo", label = "Chamber 07", relay = "redstone_relay_6" },
+    { chamber = 1, player = "Piotrusek69", relay = "redstone_relay_20" },
+    { chamber = 2, player = "Shark107", relay = "redstone_relay_21" },
+    { chamber = 3, player = "ZareMate", relay = "redstone_relay_22" },
+    { chamber = 4, player = "4e6qr", relay = "redstone_relay_23" },
+    { chamber = 5, player = "GRI_9", relay = "redstone_relay_24" },
+    { chamber = 6, player = "Armadillo122", relay = "redstone_relay_25" },
+    { chamber = 7, player = "FcFabio", relay = "redstone_relay_26" },
+    { chamber = 8, player = "M1stak3en", relay = "redstone_relay_27" },
+    { chamber = 9, player = "EnderiumEnd", relay = "redstone_relay_28" }
 }
 
 local function encode(value)
@@ -73,13 +75,13 @@ local function sendMessage(ws, message)
     return true
 end
 
-local function sendStatus(ws, chamber, player, status, label)
+local function sendStatus(ws, chamber, player, status)
     return sendMessage(ws, {
         type = "status",
         base = BASE_ID,
         baseName = "Base " .. tostring(BASE_ID),
         chamber = chamber,
-        label = label or ("Chamber " .. string.format("%02d", chamber)),
+        label = "Chamber " .. string.format("%02d", chamber),
         player = player or "",
         status = status
     })
@@ -95,12 +97,10 @@ local function pulseRelay(relayName)
 
     local ok, pulseError = pcall(function()
         relay.setOutput("front", true)
-        relay.setOutput("top", true)
 
         sleep(PULSE_TIME)
 
         relay.setOutput("front", false)
-        relay.setOutput("top", false)
     end)
 
     if not ok then
@@ -143,7 +143,7 @@ local function handlePull(ws, command)
             ")"
         )
 
-        sendStatus(ws, chamber, player, "ready", entry and entry.label or nil)
+        sendStatus(ws, chamber, player, "ready")
 
         sendMessage(ws, {
             type = "pull-result",
@@ -162,12 +162,12 @@ local function handlePull(ws, command)
     print("  Chamber: " .. chamber)
     print("  Relay:   " .. entry.relay)
 
-    sendStatus(ws, chamber, player, "pulling", entry.label)
+    sendStatus(ws, chamber, player, "pulling")
 
     local success, pulseError = pulseRelay(entry.relay)
 
     if success then
-        sendStatus(ws, chamber, player, "pulled", entry.label)
+        sendStatus(ws, chamber, player, "pulled")
 
         sendMessage(ws, {
             type = "pull-result",
@@ -179,7 +179,7 @@ local function handlePull(ws, command)
 
         print("  Result:  pulled")
     else
-        sendStatus(ws, chamber, player, "ready", entry.label)
+        sendStatus(ws, chamber, player, "ready")
 
         sendMessage(ws, {
             type = "pull-result",
@@ -210,8 +210,7 @@ local function announceConfiguredPlayers(ws)
                 ws,
                 entry.chamber,
                 entry.player,
-                "ready",
-                entry.label
+                "ready"
             )
         else
             print(
@@ -225,8 +224,7 @@ local function announceConfiguredPlayers(ws)
                 ws,
                 entry.chamber,
                 entry.player,
-                "empty",
-                entry.label
+                "empty"
             )
         end
     end
@@ -236,30 +234,11 @@ local function connect()
     local url =
         SERVER ..
         "?role=controller" ..
+        "&name=" .. encode(CONTROLLER_NAME) ..
+        "&base=" .. encode(BASE_ID) ..
         "&token=" .. encode(TOKEN)
 
-    local ws, err = http.websocket(url)
-
-    if not ws then
-        return nil, err
-    end
-
-    local registered = sendMessage(ws, {
-        type = "register",
-        controller = CONTROLLER_NAME,
-        base = BASE_ID,
-        baseName = "Base " .. tostring(BASE_ID)
-    })
-
-    if not registered then
-        pcall(function()
-            ws.close()
-        end)
-
-        return nil, "Failed to send controller registration"
-    end
-
-    return ws
+    return http.websocket(url)
 end
 
 while true do
