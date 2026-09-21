@@ -197,6 +197,7 @@ client.on("interactionCreate", async interaction => {
 
 client.once("clientReady", async () => {
   console.log("Discord bot logged in as " + client.user.tag);
+  console.log("Using Stasis API: " + STASIS_API_URL);
 
   await refreshPlayers();
 
