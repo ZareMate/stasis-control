@@ -19,7 +19,6 @@ const clients = new Set();
 const logs = [];
 const statuses = new Map();
 const pullTimers = new Map();
-const playerCounts = new Map(); // keyed by base id
 
 const CONTROLLER_TOKEN = process.env.STASIS_TOKEN;
 const PORT = Number(process.env.PORT || config.server.port);
@@ -77,7 +76,7 @@ function reportedPlayerCount() {
       return (
         typeof current.player === "string" &&
         current.player.trim() !== "" &&
-        ["ready", "pulling", "pulled"].includes(current.status)
+        ["ready", "pulling"].includes(current.status)
       );
     }).length;
   }, 0);
@@ -240,9 +239,11 @@ function updateChamberFromController(client, input) {
 
   const next = {
     player:
-      typeof input.player === "string" && input.player.trim()
-        ? input.player.trim()
-        : current.player || chamber.player || "",
+      nextStatus === "empty"
+        ? ""
+        : typeof input.player === "string" && input.player.trim()
+          ? input.player.trim()
+          : current.player || chamber.player || "",
     status: ["empty", "ready", "pulling", "pulled"].includes(nextStatus)
       ? nextStatus
       : current.status || "empty",
