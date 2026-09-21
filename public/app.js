@@ -7,6 +7,34 @@ const $ = id => document.getElementById(id);
 const PLAYER_STORAGE_KEY = "stasis-player";
 let configBaseFromServer = null;
 
+
+function showToast(message) {
+  const element = $("toast");
+
+  if (!element) {
+    console.log("[Stasis Debug] Toast:", message);
+    return;
+  }
+
+  element.textContent = message;
+  element.classList.remove("hidden");
+
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => {
+    element.classList.add("hidden");
+  }, 3500);
+}
+
+function esc(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+
 async function load() {
   try {
     const response = await fetch("/api/state", { cache: "no-store" });
