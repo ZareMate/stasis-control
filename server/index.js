@@ -117,6 +117,14 @@ function resolvePlayerChamber(player, requestedBase = null) {
       const available = [...new Set(reports.map(report => report.base))]
         .sort((a, b) => Number(a) - Number(b));
 
+      // When there is only one reported chamber for the player, use it as a
+      // safe fallback even if an old/stale default base was saved. A saved
+      // default becomes decisive again as soon as the player exists at
+      // multiple bases.
+      if (reports.length === 1) {
+        return { report: reports[0], fallbackBase: true };
+      }
+
       return {
         error: 409,
         message:
