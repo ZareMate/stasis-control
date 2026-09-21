@@ -54,28 +54,12 @@ const WHISPER_MODEL_PATH =
     __dirname,
     "..",
     "models",
-    "ggml-small.en.bin"
+    "ggml-tiny.en.bin"
   );
 
 const WHISPER_THREADS = String(
   process.env.WHISPER_THREADS || "4"
 );
-
-const WHISPER_BEAM_SIZE = String(
-  process.env.WHISPER_BEAM_SIZE || "10"
-);
-
-const WHISPER_BEST_OF = String(
-  process.env.WHISPER_BEST_OF || "10"
-);
-
-const WHISPER_PROMPT = (
-  process.env.WHISPER_PROMPT ||
-  "Farex. Pull my pearl. Ender pearl. Stasis chamber. Minecraft."
-).trim();
-
-const FFMPEG_PATH =
-  process.env.FFMPEG_PATH || "ffmpeg";
 
 const VOICE_TRIGGER = (
   process.env.VOICE_TRIGGER || "Farex pull my pearl"
@@ -157,44 +141,6 @@ function logInteractionTiming(interaction) {
   return ageMs;
 }
 
-
-function testFfmpeg() {
-  return new Promise(resolve => {
-    const child = spawn(
-      FFMPEG_PATH,
-      ["-version"],
-      { stdio: ["ignore", "pipe", "pipe"] }
-    );
-
-    let version = "";
-
-    child.stdout.on("data", chunk => {
-      version += chunk.toString();
-    });
-
-    child.on("error", error => {
-      console.error(
-        "[STT] FFmpeg check failed:",
-        error.message
-      );
-      resolve(false);
-    });
-
-    child.on("close", code => {
-      if (code === 0) {
-        const firstLine = version.split(/\r?\n/)[0];
-        console.log("[STT] " + firstLine);
-        resolve(true);
-      } else {
-        console.error(
-          "[STT] FFmpeg returned exit code " +
-            code
-        );
-        resolve(false);
-      }
-    });
-  });
-}
 
 async function testDiscordRest() {
   const started = Date.now();
@@ -368,85 +314,8 @@ function normalizeSpeech(text) {
     .replace(/\s+/g, " ");
 }
 
-function editDistance(a, b) {
-  const rows = a.length + 1;
-  const cols = b.length + 1;
-  const dp = Array.from(
-    { length: rows },
-    () => Array(cols).fill(0)
-  );
-
-  for (let i = 0; i < rows; i++) dp[i][0] = i;
-  for (let j = 0; j < cols; j++) dp[0][j] = j;
-
-  for (let i = 1; i < rows; i++) {
-    for (let j = 1; j < cols; j++) {
-      dp[i][j] =
-        a[i - 1] === b[j - 1]
-          ? dp[i - 1][j - 1]
-          : Math.min(
-              dp[i - 1][j] + 1,
-              dp[i][j - 1] + 1,
-              dp[i - 1][j - 1] + 1
-            );
-    }
-  }
-
-  return dp[rows - 1][cols - 1];
-}
-
-function wordMatches(word, target, maxDistance) {
-  return (
-    word === target ||
-    editDistance(word, target) <= maxDistance
-  );
-}
-
-function containsWordNear(words, target, maxDistance) {
-  return words.some(word =>
-    wordMatches(word, target, maxDistance)
-  );
-}
-
-function containsNameNear(words) {
-  for (let i = 0; i < words.length; i++) {
-    const one = words[i];
-
-    if (wordMatches(one, "farex", 2)) {
-      return true;
-    }
-
-    if (i + 1 < words.length) {
-      const joined = one + words[i + 1];
-
-      if (wordMatches(joined, "farex", 2)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
 function phraseMatches(text) {
-  const normalized = normalizeSpeech(text);
-  const words = normalized.split(" ").filter(Boolean);
-
-  if (!words.length) {
-    return false;
-  }
-
-  if (normalized.includes(VOICE_TRIGGER)) {
-    return true;
-  }
-
-  // Whisper may hear "Farex" as "fair ex", "fare ex", "far x", etc.
-  // Require the two meaningful action words as well to avoid false triggers.
-  return (
-    containsNameNear(words) &&
-    containsWordNear(words, "pull", 1) &&
-    containsWordNear(words, "pearl", 2)
-  );
+  return normalizeSpeech(text).includes(VOICE_TRIGGER);
 }
 
 async function pullPlayer(player) {
@@ -478,13 +347,43 @@ async function pullPlayer(player) {
   return result;
 }
 
+function writeWav(filePath, pcm) {
+  const sampleRate = 16000;
+  const channels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * channels * bitsPerSample / 8;
+  const blockAlign = channels * bitsPerSample / 8;
+
+  const header = Buffer.alloc(44);
+
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+
+  fs.writeFileSync(
+    filePath,
+    Buffer.concat([header, pcm])
+  );
+}
+
 function runWhisper(wavPath) {
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(WHISPER_CLI_PATH)) {
       reject(
         new Error(
           "whisper-cli not found at " +
-            WHISPER_CLI_PATH
+            WHISPER_CLI_PATH +
+            ". Run bot/setup-whisper.sh or set WHISPER_CLI_PATH."
         )
       );
       return;
@@ -494,7 +393,8 @@ function runWhisper(wavPath) {
       reject(
         new Error(
           "Whisper model not found at " +
-            WHISPER_MODEL_PATH
+            WHISPER_MODEL_PATH +
+            ". Run bot/setup-whisper.sh or set WHISPER_MODEL_PATH."
         )
       );
       return;
@@ -510,38 +410,33 @@ function runWhisper(wavPath) {
       "-nt",
       "-np",
       "-t",
-      WHISPER_THREADS,
-      "-bs",
-      WHISPER_BEAM_SIZE,
-      "-bo",
-      WHISPER_BEST_OF,
-      "-tp",
-      "0",
-      "-mc",
-      "0",
-      "-sns",
-      "--prompt",
-      WHISPER_PROMPT
+      WHISPER_THREADS
     ];
 
-    const child = spawn(WHISPER_CLI_PATH, args, {
-      stdio: ["ignore", "pipe", "pipe"]
-    });
+    const process = spawn(
+      WHISPER_CLI_PATH,
+      args,
+      {
+        stdio: ["ignore", "pipe", "pipe"]
+      }
+    );
 
     let stdout = "";
     let stderr = "";
 
-    child.stdout.on("data", chunk => {
+    process.stdout.on("data", chunk => {
       stdout += chunk.toString();
     });
 
-    child.stderr.on("data", chunk => {
+    process.stderr.on("data", chunk => {
       stderr += chunk.toString();
     });
 
-    child.on("error", reject);
+    process.on("error", error => {
+      reject(error);
+    });
 
-    child.on("close", code => {
+    process.on("close", code => {
       const text = stdout
         .split(/\r?\n/)
         .map(line => line.trim())
@@ -566,138 +461,8 @@ function runWhisper(wavPath) {
   });
 }
 
-function ffmpegConvertRawPcmToWav(rawPcm, wavPath) {
-  return new Promise((resolve, reject) => {
-    if (!rawPcm || !rawPcm.length) {
-      reject(new Error("No PCM audio received"));
-      return;
-    }
-
-    const inputFrames = Math.floor(rawPcm.length / 4);
-    const durationSeconds = inputFrames / 48000;
-
-    console.log(
-      "[STT] FFmpeg input: " +
-        rawPcm.length +
-        " bytes, " +
-        durationSeconds.toFixed(2) +
-        "s, 48 kHz stereo PCM"
-    );
-
-    const args = [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-f",
-      "s16le",
-      "-ar",
-      "48000",
-      "-ac",
-      "2",
-      "-i",
-      "pipe:0",
-      "-ar",
-      "16000",
-      "-ac",
-      "1",
-      "-c:a",
-      "pcm_s16le",
-      "-f",
-      "wav",
-      wavPath
-    ];
-
-    const child = spawn(FFMPEG_PATH, args, {
-      stdio: ["pipe", "ignore", "pipe"]
-    });
-
-    let stderr = "";
-
-    child.stderr.on("data", chunk => {
-      stderr += chunk.toString();
-    });
-
-    child.on("error", error => {
-      reject(
-        new Error(
-          "FFmpeg failed to start: " +
-            error.message +
-            ". Install ffmpeg or set FFMPEG_PATH."
-        )
-      );
-    });
-
-    child.on("close", code => {
-      if (code !== 0) {
-        reject(
-          new Error(
-            "FFmpeg exited with code " +
-              code +
-              (stderr.trim()
-                ? ": " + stderr.trim().slice(-500)
-                : "")
-          )
-        );
-        return;
-      }
-
-      if (!fs.existsSync(wavPath)) {
-        reject(
-          new Error("FFmpeg did not create the WAV file")
-        );
-        return;
-      }
-
-      const outputSize = fs.statSync(wavPath).size;
-
-      if (outputSize <= 44) {
-        reject(
-          new Error(
-            "FFmpeg created an empty WAV (" +
-              outputSize +
-              " bytes)"
-          )
-        );
-        return;
-      }
-
-      console.log(
-        "[STT] FFmpeg output: " +
-          outputSize +
-          " byte WAV"
-      );
-
-      resolve();
-    });
-
-    child.stdin.on("error", error => {
-      if (error.code !== "EPIPE") {
-        reject(error);
-      }
-    });
-
-    child.stdin.end(rawPcm);
-  });
-}
-
 async function transcribePcm(pcm) {
-  if (!pcm || !pcm.length) {
-    return "";
-  }
-
-  const inputFrames = Math.floor(pcm.length / 4);
-  const durationSeconds = inputFrames / 48000;
-
-  // Very short packets are usually Discord voice noise or a clipped
-  // beginning/end of speech. Don't waste a Whisper invocation on them.
-  if (durationSeconds < 0.45) {
-    console.log(
-      "[STT] Ignoring short audio: " +
-        durationSeconds.toFixed(2) +
-        "s"
-    );
-    return "";
-  }
+  if (!pcm.length) return "";
 
   const tempPath = path.join(
     os.tmpdir(),
@@ -711,15 +476,7 @@ async function transcribePcm(pcm) {
   );
 
   try {
-    await ffmpegConvertRawPcmToWav(
-      pcm,
-      tempPath
-    );
-
-    console.log(
-      "[STT] Sending FFmpeg-generated WAV to Whisper"
-    );
-
+    writeWav(tempPath, pcm);
     return await runWhisper(tempPath);
   } finally {
     try {
@@ -747,30 +504,22 @@ function destroyVoiceSession(guildId) {
 
 function startSpeechStream(session, userId) {
   if (userId !== session.listenerUserId) return;
-
-  const now = Date.now();
-
-  if (session.cooldownUntil && now < session.cooldownUntil) {
-    return;
-  }
-
-  if (session.streams.has(userId)) {
-    return;
-  }
+  if (session.triggered) return;
+  if (session.streams.has(userId)) return;
 
   const opusStream = session.connection.receiver.subscribe(
     userId,
     {
       end: {
         behavior: EndBehaviorType.AfterSilence,
-        duration: 1500
+        duration: 900
       }
     }
   );
 
   const decoder = new prism.opus.Decoder({
-    rate: 48000,
-    channels: 2,
+    rate: 16000,
+    channels: 1,
     frameSize: 960
   });
 
@@ -779,8 +528,7 @@ function startSpeechStream(session, userId) {
   const streamState = {
     opusStream,
     decoder,
-    chunks,
-    cleaned: false
+    chunks
   };
 
   session.streams.set(userId, streamState);
@@ -800,23 +548,15 @@ function startSpeechStream(session, userId) {
   });
 
   const cleanup = async () => {
-    if (streamState.cleaned) return;
-    streamState.cleaned = true;
-
-    if (session.streams.get(userId) === streamState) {
-      session.streams.delete(userId);
-    }
-
-    const pcm = Buffer.concat(chunks);
-
-    if (!pcm.length) {
+    if (session.streams.get(userId) !== streamState) {
       return;
     }
 
-    if (
-      session.cooldownUntil &&
-      Date.now() < session.cooldownUntil
-    ) {
+    session.streams.delete(userId);
+
+    const pcm = Buffer.concat(chunks);
+
+    if (!pcm.length || session.triggered) {
       return;
     }
 
@@ -824,7 +564,6 @@ function startSpeechStream(session, userId) {
       const text = await transcribePcm(pcm);
 
       if (!text) {
-        console.log("[STT] No speech recognized");
         return;
       }
 
@@ -835,41 +574,37 @@ function startSpeechStream(session, userId) {
           text
       );
 
-      const matched = phraseMatches(text);
-
-      if (!matched) {
-        return;
-      }
-
-      console.log(
-        "[STT] Trigger detected: \"" +
-          VOICE_TRIGGER +
-          "\" -> pulling " +
-          VOICE_TRIGGER_PLAYER
-      );
-
-      session.cooldownUntil = Date.now() + 5000;
-
-      try {
-        const result = await pullPlayer(
-          VOICE_TRIGGER_PLAYER
-        );
+      if (!session.triggered && phraseMatches(text)) {
+        session.triggered = true;
 
         console.log(
-          "[STT] Pull sent for " +
-            result.player +
-            " from Base " +
-            result.base +
-            " / Chamber " +
-            String(result.chamber).padStart(2, "0")
-        );
-      } catch (error) {
-        console.error(
-          "[STT] Voice pull failed:",
-          error.message
+          "[STT] Trigger detected: \"" +
+            VOICE_TRIGGER +
+            "\" -> pulling " +
+            VOICE_TRIGGER_PLAYER
         );
 
-        session.cooldownUntil = Date.now() + 1500;
+        try {
+          const result = await pullPlayer(
+            VOICE_TRIGGER_PLAYER
+          );
+
+          console.log(
+            "[STT] Pull sent for " +
+              result.player +
+              " from Base " +
+              result.base +
+              " / Chamber " +
+              String(result.chamber).padStart(2, "0")
+          );
+        } catch (error) {
+          console.error(
+            "[STT] Voice pull failed:",
+            error.message
+          );
+
+          session.triggered = false;
+        }
       }
     } catch (error) {
       console.error(
@@ -901,20 +636,9 @@ function startSpeechStream(session, userId) {
       "[STT] Voice receive error:",
       error.message
     );
-
-    void cleanup();
   });
 
-  try {
-    opusStream.pipe(decoder);
-  } catch (error) {
-    console.error(
-      "[STT] Unable to start decoder:",
-      error.message
-    );
-
-    void cleanup();
-  }
+  opusStream.pipe(decoder);
 }
 
 async function joinVoice(interaction) {
@@ -1148,21 +872,6 @@ client.once("clientReady", async () => {
     "Whisper model: " + WHISPER_MODEL_PATH
   );
   console.log(
-    "FFmpeg: " + FFMPEG_PATH
-  );
-  console.log(
-    "Whisper beam/best-of: " +
-      WHISPER_BEAM_SIZE +
-      "/" +
-      WHISPER_BEST_OF
-  );
-  console.log(
-    "Whisper audio input: Discord Opus -> OGG 48kHz stereo"
-  );
-  console.log(
-    "Whisper prompt: " + WHISPER_PROMPT
-  );
-  console.log(
     "DNS result order: " + dns.getDefaultResultOrder()
   );
 
@@ -1177,15 +886,7 @@ client.once("clientReady", async () => {
       "[STT] Whisper model is not installed. Run bot/setup-whisper.sh."
     );
   } else {
-    const ffmpegReady = await testFfmpeg();
-
-    if (ffmpegReady) {
-      console.log("[STT] Whisper STT is ready");
-    } else {
-      console.error(
-        "[STT] Voice recognition is disabled until ffmpeg is installed."
-      );
-    }
+    console.log("[STT] Whisper STT is ready");
   }
 
   await refreshPlayers();
