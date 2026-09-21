@@ -201,6 +201,53 @@ async function safeAutocompleteRespond(interaction, choices) {
   }
 }
 
+async function acknowledgeCommand(interaction, content) {
+  const age = Date.now() - interaction.createdTimestamp;
+
+  if (age > 2000) {
+    console.warn(
+      "[Discord] Slow interaction before acknowledgement: " +
+        age +
+        "ms, command=/" +
+        interaction.commandName
+    );
+  }
+
+  try {
+    await interaction.reply({
+      content,
+      flags: MessageFlags.Ephemeral
+    });
+
+    return true;
+  } catch (error) {
+    console.error("[Discord] Initial interaction reply failed:", {
+      code: error?.code,
+      status: error?.status,
+      command: interaction.commandName,
+      ageMs: Date.now() - interaction.createdTimestamp,
+      error: error?.message || String(error)
+    });
+
+    return false;
+  }
+}
+
+async function editCommand(interaction, content) {
+  try {
+    await interaction.editReply(content);
+    return true;
+  } catch (error) {
+    console.error("[Discord] Interaction edit failed:", {
+      code: error?.code,
+      command: interaction.commandName,
+      error: error?.message || String(error)
+    });
+
+    return false;
+  }
+}
+
 function normalizeSpeech(text) {
   return String(text || "")
     .toLowerCase()
@@ -634,14 +681,20 @@ client.on("interactionCreate", async interaction => {
       true
     );
 
-    await interaction.deferReply({
-      flags: MessageFlags.Ephemeral
-    });
+    if (
+      !(await acknowledgeCommand(
+        interaction,
+        "⏳ Processing pull request..."
+      ))
+    ) {
+      return;
+    }
 
     try {
       const result = await pullPlayer(player);
 
-      await interaction.editReply(
+      await editCommand(
+        interaction,
         "✅ Pull command sent for **" +
           result.player +
           "** from **Base " +
@@ -659,12 +712,13 @@ client.on("interactionCreate", async interaction => {
         error.availableBases.length
       ) {
         message +=
-          "\\nAvailable bases: " +
+          "\nAvailable bases: " +
           error.availableBases.join(", ") +
           ". Set the player's default base in the Stasis Control dashboard.";
       }
 
-      await interaction.editReply(
+      await editCommand(
+        interaction,
         "❌ " + message
       );
     }
@@ -673,16 +727,22 @@ client.on("interactionCreate", async interaction => {
   }
 
   if (interaction.commandName === "join") {
-    await interaction.deferReply({
-      flags: MessageFlags.Ephemeral
-    });
+    if (
+      !(await acknowledgeCommand(
+        interaction,
+        "🎙️ Connecting to your voice channel..."
+      ))
+    ) {
+      return;
+    }
 
     try {
       const session = await joinVoice(
         interaction
       );
 
-      await interaction.editReply(
+      await editCommand(
+        interaction,
         "🎙️ Joined <#" +
           session.channelId +
           "> and listening only to **" +
@@ -703,7 +763,8 @@ client.on("interactionCreate", async interaction => {
         destroyVoiceSession(interaction.guildId);
       }
 
-      await interaction.editReply(
+      await editCommand(
+        interaction,
         "❌ Unable to join voice: " +
           (error.message || "unknown error")
       );
@@ -715,11 +776,10 @@ client.on("interactionCreate", async interaction => {
   if (interaction.commandName === "leave") {
     destroyVoiceSession(interaction.guildId);
 
-    await interaction.reply({
-      content:
-        "👋 Left the voice channel and stopped listening.",
-      flags: MessageFlags.Ephemeral
-    });
+    await acknowledgeCommand(
+      interaction,
+      "👋 Left the voice channel and stopped listening."
+    );
   }
 });
 
@@ -775,6 +835,14 @@ function shutdown() {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+
+process.on("unhandledRejection", error => {
+  console.error("[Discord] Unhandled promise rejection:", error);
+});
+
+process.on("uncaughtException", error => {
+  console.error("[Discord] Uncaught exception:", error);
+});
 
 (async () => {
   await registerCommands();
