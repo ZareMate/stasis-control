@@ -54,12 +54,25 @@ const WHISPER_MODEL_PATH =
     __dirname,
     "..",
     "models",
-    "ggml-tiny.en.bin"
+    "ggml-small.en.bin"
   );
 
 const WHISPER_THREADS = String(
   process.env.WHISPER_THREADS || "4"
 );
+
+const WHISPER_BEAM_SIZE = String(
+  process.env.WHISPER_BEAM_SIZE || "10"
+);
+
+const WHISPER_BEST_OF = String(
+  process.env.WHISPER_BEST_OF || "10"
+);
+
+const WHISPER_PROMPT = (
+  process.env.WHISPER_PROMPT ||
+  "Farex. Pull my pearl. Ender pearl. Stasis chamber. Minecraft."
+).trim();
 
 const VOICE_TRIGGER = (
   process.env.VOICE_TRIGGER || "Farex pull my pearl"
@@ -314,8 +327,85 @@ function normalizeSpeech(text) {
     .replace(/\s+/g, " ");
 }
 
+function editDistance(a, b) {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const dp = Array.from(
+    { length: rows },
+    () => Array(cols).fill(0)
+  );
+
+  for (let i = 0; i < rows; i++) dp[i][0] = i;
+  for (let j = 0; j < cols; j++) dp[0][j] = j;
+
+  for (let i = 1; i < rows; i++) {
+    for (let j = 1; j < cols; j++) {
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : Math.min(
+              dp[i - 1][j] + 1,
+              dp[i][j - 1] + 1,
+              dp[i - 1][j - 1] + 1
+            );
+    }
+  }
+
+  return dp[rows - 1][cols - 1];
+}
+
+function wordMatches(word, target, maxDistance) {
+  return (
+    word === target ||
+    editDistance(word, target) <= maxDistance
+  );
+}
+
+function containsWordNear(words, target, maxDistance) {
+  return words.some(word =>
+    wordMatches(word, target, maxDistance)
+  );
+}
+
+function containsNameNear(words) {
+  for (let i = 0; i < words.length; i++) {
+    const one = words[i];
+
+    if (wordMatches(one, "farex", 2)) {
+      return true;
+    }
+
+    if (i + 1 < words.length) {
+      const joined = one + words[i + 1];
+
+      if (wordMatches(joined, "farex", 2)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 function phraseMatches(text) {
-  return normalizeSpeech(text).includes(VOICE_TRIGGER);
+  const normalized = normalizeSpeech(text);
+  const words = normalized.split(" ").filter(Boolean);
+
+  if (!words.length) {
+    return false;
+  }
+
+  if (normalized.includes(VOICE_TRIGGER)) {
+    return true;
+  }
+
+  // Whisper may hear "Farex" as "fair ex", "fare ex", "far x", etc.
+  // Require the two meaningful action words as well to avoid false triggers.
+  return (
+    containsNameNear(words) &&
+    containsWordNear(words, "pull", 1) &&
+    containsWordNear(words, "pearl", 2)
+  );
 }
 
 async function pullPlayer(player) {
@@ -410,7 +500,16 @@ function runWhisper(wavPath) {
       "-nt",
       "-np",
       "-t",
-      WHISPER_THREADS
+      WHISPER_THREADS,
+      "-bs",
+      WHISPER_BEAM_SIZE,
+      "-bo",
+      WHISPER_BEST_OF,
+      "-mc",
+      "0",
+      "--suppress-nst",
+      "--prompt",
+      WHISPER_PROMPT
     ];
 
     const process = spawn(
@@ -574,7 +673,16 @@ function startSpeechStream(session, userId) {
           text
       );
 
-      if (!session.triggered && phraseMatches(text)) {
+      const matched = phraseMatches(text);
+
+      if (matched) {
+        console.log(
+          "[STT] Trigger candidate matched from transcript: " +
+            text
+        );
+      }
+
+      if (!session.triggered && matched) {
         session.triggered = true;
 
         console.log(
@@ -870,6 +978,15 @@ client.once("clientReady", async () => {
   );
   console.log(
     "Whisper model: " + WHISPER_MODEL_PATH
+  );
+  console.log(
+    "Whisper beam/best-of: " +
+      WHISPER_BEAM_SIZE +
+      "/" +
+      WHISPER_BEST_OF
+  );
+  console.log(
+    "Whisper prompt: " + WHISPER_PROMPT
   );
   console.log(
     "DNS result order: " + dns.getDefaultResultOrder()
