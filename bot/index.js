@@ -74,6 +74,9 @@ const WHISPER_PROMPT = (
   "Farex. Pull my pearl. Ender pearl. Stasis chamber. Minecraft."
 ).trim();
 
+const FFMPEG_PATH =
+  process.env.FFMPEG_PATH || "ffmpeg";
+
 const VOICE_TRIGGER = (
   process.env.VOICE_TRIGGER || "Farex pull my pearl"
 )
@@ -154,6 +157,44 @@ function logInteractionTiming(interaction) {
   return ageMs;
 }
 
+
+function testFfmpeg() {
+  return new Promise(resolve => {
+    const child = spawn(
+      FFMPEG_PATH,
+      ["-version"],
+      { stdio: ["ignore", "pipe", "pipe"] }
+    );
+
+    let version = "";
+
+    child.stdout.on("data", chunk => {
+      version += chunk.toString();
+    });
+
+    child.on("error", error => {
+      console.error(
+        "[STT] FFmpeg check failed:",
+        error.message
+      );
+      resolve(false);
+    });
+
+    child.on("close", code => {
+      if (code === 0) {
+        const firstLine = version.split(/\r?\n/)[0];
+        console.log("[STT] " + firstLine);
+        resolve(true);
+      } else {
+        console.error(
+          "[STT] FFmpeg returned exit code " +
+            code
+        );
+        resolve(false);
+      }
+    });
+  });
+}
 
 async function testDiscordRest() {
   const started = Date.now();
@@ -525,73 +566,118 @@ function runWhisper(wavPath) {
   });
 }
 
-function convertDiscordPcmTo16Mono(pcm) {
-  const bytesPerFrame = 4; // 16-bit little-endian stereo
-  const inputFrames = Math.floor(pcm.length / bytesPerFrame);
-
-  if (inputFrames < 3) {
-    return Buffer.alloc(0);
-  }
-
-  const outputFrames = Math.floor(inputFrames / 3);
-  const output = Buffer.alloc(outputFrames * 2);
-
-  let inputFrame = 0;
-  let outputOffset = 0;
-
-  while (inputFrame + 2 < inputFrames) {
-    let sum = 0;
-
-    // Average 3 source frames (48 kHz -> 16 kHz) and downmix stereo to mono.
-    for (let i = 0; i < 3; i++) {
-      const offset = (inputFrame + i) * bytesPerFrame;
-      const left = pcm.readInt16LE(offset);
-      const right = pcm.readInt16LE(offset + 2);
-
-      sum += (left + right) / 2;
+function ffmpegConvertRawPcmToWav(rawPcm, wavPath) {
+  return new Promise((resolve, reject) => {
+    if (!rawPcm || !rawPcm.length) {
+      reject(new Error("No PCM audio received"));
+      return;
     }
 
-    const sample = Math.max(
-      -32768,
-      Math.min(32767, Math.round(sum / 3))
+    const inputFrames = Math.floor(rawPcm.length / 4);
+    const durationSeconds = inputFrames / 48000;
+
+    console.log(
+      "[STT] FFmpeg input: " +
+        rawPcm.length +
+        " bytes, " +
+        durationSeconds.toFixed(2) +
+        "s, 48 kHz stereo PCM"
     );
 
-    output.writeInt16LE(sample, outputOffset);
+    const args = [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-f",
+      "s16le",
+      "-ar",
+      "48000",
+      "-ac",
+      "2",
+      "-i",
+      "pipe:0",
+      "-ar",
+      "16000",
+      "-ac",
+      "1",
+      "-c:a",
+      "pcm_s16le",
+      "-f",
+      "wav",
+      wavPath
+    ];
 
-    inputFrame += 3;
-    outputOffset += 2;
-  }
+    const child = spawn(FFMPEG_PATH, args, {
+      stdio: ["pipe", "ignore", "pipe"]
+    });
 
-  return output;
-}
+    let stderr = "";
 
-function writeWav(filePath, pcm) {
-  const sampleRate = 16000;
-  const channels = 1;
-  const bitsPerSample = 16;
-  const blockAlign = channels * bitsPerSample / 8;
-  const byteRate = sampleRate * blockAlign;
+    child.stderr.on("data", chunk => {
+      stderr += chunk.toString();
+    });
 
-  const header = Buffer.alloc(44);
+    child.on("error", error => {
+      reject(
+        new Error(
+          "FFmpeg failed to start: " +
+            error.message +
+            ". Install ffmpeg or set FFMPEG_PATH."
+        )
+      );
+    });
 
-  header.write("RIFF", 0);
-  header.writeUInt32LE(36 + pcm.length, 4);
-  header.write("WAVE", 8);
-  header.write("fmt ", 12);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(channels, 22);
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(byteRate, 28);
-  header.writeUInt16LE(blockAlign, 32);
-  header.writeUInt16LE(bitsPerSample, 34);
-  header.write("data", 36);
-  header.writeUInt32LE(pcm.length, 40);
+    child.on("close", code => {
+      if (code !== 0) {
+        reject(
+          new Error(
+            "FFmpeg exited with code " +
+              code +
+              (stderr.trim()
+                ? ": " + stderr.trim().slice(-500)
+                : "")
+          )
+        );
+        return;
+      }
 
-  fs.writeFileSync(
-    filePath,
-    Buffer.concat([header, pcm])
-  );
+      if (!fs.existsSync(wavPath)) {
+        reject(
+          new Error("FFmpeg did not create the WAV file")
+        );
+        return;
+      }
+
+      const outputSize = fs.statSync(wavPath).size;
+
+      if (outputSize <= 44) {
+        reject(
+          new Error(
+            "FFmpeg created an empty WAV (" +
+              outputSize +
+              " bytes)"
+          )
+        );
+        return;
+      }
+
+      console.log(
+        "[STT] FFmpeg output: " +
+          outputSize +
+          " byte WAV"
+      );
+
+      resolve();
+    });
+
+    child.stdin.on("error", error => {
+      if (error.code !== "EPIPE") {
+        reject(error);
+      }
+    });
+
+    child.stdin.end(rawPcm);
+  });
 }
 
 async function transcribePcm(pcm) {
@@ -599,9 +685,17 @@ async function transcribePcm(pcm) {
     return "";
   }
 
-  const audio = convertDiscordPcmTo16Mono(pcm);
+  const inputFrames = Math.floor(pcm.length / 4);
+  const durationSeconds = inputFrames / 48000;
 
-  if (!audio.length) {
+  // Very short packets are usually Discord voice noise or a clipped
+  // beginning/end of speech. Don't waste a Whisper invocation on them.
+  if (durationSeconds < 0.45) {
+    console.log(
+      "[STT] Ignoring short audio: " +
+        durationSeconds.toFixed(2) +
+        "s"
+    );
     return "";
   }
 
@@ -617,12 +711,13 @@ async function transcribePcm(pcm) {
   );
 
   try {
-    writeWav(tempPath, audio);
+    await ffmpegConvertRawPcmToWav(
+      pcm,
+      tempPath
+    );
 
     console.log(
-      "[STT] Transcribing " +
-        audio.length +
-        " bytes of 16 kHz mono WAV"
+      "[STT] Sending FFmpeg-generated WAV to Whisper"
     );
 
     return await runWhisper(tempPath);
@@ -668,7 +763,7 @@ function startSpeechStream(session, userId) {
     {
       end: {
         behavior: EndBehaviorType.AfterSilence,
-        duration: 1200
+        duration: 1500
       }
     }
   );
@@ -1053,6 +1148,9 @@ client.once("clientReady", async () => {
     "Whisper model: " + WHISPER_MODEL_PATH
   );
   console.log(
+    "FFmpeg: " + FFMPEG_PATH
+  );
+  console.log(
     "Whisper beam/best-of: " +
       WHISPER_BEAM_SIZE +
       "/" +
@@ -1079,7 +1177,15 @@ client.once("clientReady", async () => {
       "[STT] Whisper model is not installed. Run bot/setup-whisper.sh."
     );
   } else {
-    console.log("[STT] Whisper STT is ready");
+    const ffmpegReady = await testFfmpeg();
+
+    if (ffmpegReady) {
+      console.log("[STT] Whisper STT is ready");
+    } else {
+      console.error(
+        "[STT] Voice recognition is disabled until ffmpeg is installed."
+      );
+    }
   }
 
   await refreshPlayers();
