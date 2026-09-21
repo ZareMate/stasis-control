@@ -143,3 +143,53 @@ Heartbeat response:
   "id": 1
 }
 ```
+
+## Player default bases
+
+The dashboard has a **CONFIG** menu where a player can enter their Minecraft name and choose a connected base as their default.
+
+The setting is stored server-side in `data/player-preferences.json` and is used by the Discord `/pull player` command when the player exists at more than one base.
+
+The browser also remembers the last entered Minecraft player name locally so the configuration form is easier to reuse.
+
+## Discord bot
+
+The repository includes a Discord bot in `bot/index.js`.
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Configure these environment variables:
+
+```env
+DISCORD_TOKEN=your-discord-bot-token
+DISCORD_CLIENT_ID=your-discord-application-id
+DISCORD_GUILD_ID=your-discord-server-id
+STASIS_API_URL=http://127.0.0.1:3000
+PULL_API_TOKEN=replace-with-a-separate-pull-api-token
+```
+
+Start the bot:
+
+```bash
+npm run bot
+```
+
+The bot registers:
+
+```text
+/pull player
+```
+
+The player field has autocomplete from the currently reported stasis players.
+
+Pull resolution works like this:
+
+1. If the player has a saved default base, that base is used.
+2. If the player only exists at one base, that base is used automatically.
+3. If the player exists at multiple bases without a default, the command returns the available bases and asks for a default to be configured on the dashboard.
+
+`PULL_API_TOKEN` is separate from the ComputerCraft `STASIS_TOKEN`.
