@@ -239,11 +239,17 @@ local function clearPulledStatus(chamber)
     local entry = chambers[chamber]
 
     if entry and entry.status == "pulled" then
+        local player = entry.player
+
         entry.status = "ready"
         entry.statusSince = os.epoch("utc")
         entry.pulledUntil = nil
         entry.pulledTimer = nil
+
+        return player
     end
+
+    return nil
 end
 
 local function setChamberStatus(chamber, player, status, label)
@@ -601,7 +607,16 @@ while true do
                         if entry.status == "pulled" and
                            entry.pulledUntil and
                            os.epoch("utc") >= entry.pulledUntil then
-                            clearPulledStatus(chamber)
+                            local player = clearPulledStatus(chamber)
+
+                            if player then
+                                sendStatus(
+                                    ws,
+                                    chamber,
+                                    player,
+                                    "ready"
+                                )
+                            end
                         end
                     end
 
@@ -611,7 +626,17 @@ while true do
                 else
                     for chamber, entry in pairs(chambers) do
                         if entry.pulledTimer == a then
-                            clearPulledStatus(chamber)
+                            local player = clearPulledStatus(chamber)
+
+                            if player then
+                                sendStatus(
+                                    ws,
+                                    chamber,
+                                    player,
+                                    "ready"
+                                )
+                            end
+
                             drawMonitor()
                         end
                     end
