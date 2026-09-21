@@ -330,7 +330,10 @@ function render() {
             ("Chamber " + String(chamber.id).padStart(2, "0"))
           ) +
         "</div>" +
-        '<button class="pull" ' +
+        (chamber.isDefaultChamber
+          ? '<div class="default-chamber">DEFAULT CHAMBER</div>'
+          : "") +
+        '<button class="pull" '
           (canPull ? "" : "disabled") +
         ">PULL PEARL</button>";
 
