@@ -82,6 +82,62 @@ function normalizeStatus(status) {
     : "empty";
 }
 
+function setControllerIdentity(client, input = {}) {
+  const baseValue = input.base ?? input.baseId ?? client.base;
+  const base = Number(baseValue);
+
+  if (Number.isInteger(base) && base >= 0) {
+    client.base = base;
+  }
+
+  if (
+    typeof input.baseName === "string" &&
+    input.baseName.trim()
+  ) {
+    client.baseName = input.baseName.trim();
+  } else if (
+    typeof input.base_name === "string" &&
+    input.base_name.trim()
+  ) {
+    client.baseName = input.base_name.trim();
+  } else if (client.base !== null && !client.baseName) {
+    client.baseName = "Base " + client.base;
+  }
+
+  if (
+    typeof input.controller === "string" &&
+    input.controller.trim()
+  ) {
+    client.controllerName = input.controller.trim();
+  } else if (
+    typeof input.name === "string" &&
+    input.name.trim()
+  ) {
+    client.controllerName = input.name.trim();
+  } else if (!client.controllerName) {
+    client.controllerName =
+      client.base !== null
+        ? "base-" + client.base
+        : "controller-" + client.id.slice(0, 8);
+  }
+
+  return client.base !== null;
+}
+
+function unwrapChambers(message) {
+  if (Array.isArray(message.chambers)) return message.chambers;
+  if (Array.isArray(message.data)) return message.data;
+  if (Array.isArray(message.stasis)) return message.stasis;
+  if (message.data && Array.isArray(message.data.chambers)) {
+    return message.data.chambers;
+  }
+  if (message.stasis && Array.isArray(message.stasis.chambers)) {
+    return message.stasis.chambers;
+  }
+
+  return null;
+}
+
 function collectReports() {
   const reports = new Map();
 
@@ -365,27 +421,17 @@ function processControllerMessage(client, message) {
     return;
   }
 
+  // Controllers may identify themselves either in the WebSocket query string
+  // or inside the first status/stasis message. This keeps the protocol fully
+  // WebSocket-driven while remaining compatible with older controllers.
   if (message.type === "register") {
-    const base = Number(message.base);
-
-    if (!Number.isInteger(base) || base < 0) {
+    if (!setControllerIdentity(client, message)) {
       safeSend(client.ws, {
         type: "error",
         error: "Invalid base in registration"
       });
       return;
     }
-
-    client.base = base;
-    client.baseName =
-      typeof message.baseName === "string" && message.baseName.trim()
-        ? message.baseName.trim()
-        : "Base " + base;
-
-    client.controllerName =
-      typeof message.controller === "string" && message.controller.trim()
-        ? message.controller.trim()
-        : client.controllerName || "controller";
 
     safeSend(client.ws, {
       type: "registered",
@@ -406,10 +452,13 @@ function processControllerMessage(client, message) {
     return;
   }
 
+  // Infer identity from any incoming message that carries base information.
+  setControllerIdentity(client, message);
+
   if (client.base === null) {
     safeSend(client.ws, {
       type: "error",
-      error: "Send a register message first"
+      error: "Controller base is unknown; include base in the WebSocket data"
     });
     return;
   }
@@ -419,15 +468,34 @@ function processControllerMessage(client, message) {
     return;
   }
 
+  const chamberList = unwrapChambers(message);
+
   if (
     message.type === "stasis" ||
     message.type === "stasis-data" ||
-    message.type === "state"
+    message.type === "state" ||
+    chamberList
   ) {
-    if (Array.isArray(message.chambers)) {
-      for (const chamber of message.chambers) {
-        updateChamberFromController(client, chamber);
+    if (chamberList) {
+      for (const chamber of chamberList) {
+        // A chamber entry may carry its own base/controller metadata.
+        if (chamber && typeof chamber === "object") {
+          updateChamberFromController(
+            client,
+            {
+              ...chamber,
+              base:
+                chamber.base ??
+                chamber.baseId ??
+                message.base ??
+                message.baseId ??
+                client.base
+            }
+          );
+        }
       }
+
+      broadcastSnapshot();
     }
 
     return;
@@ -639,6 +707,8 @@ wss.on("connection", (ws, request) => {
 
   const role = url.searchParams.get("role");
   const token = url.searchParams.get("token");
+  const queryBase = url.searchParams.get("base");
+  const queryName = url.searchParams.get("name");
 
   if (role === "browser") {
     const client = {
@@ -668,7 +738,9 @@ wss.on("connection", (ws, request) => {
     return;
   }
 
-  if (role !== "controller" || token !== CONTROLLER_TOKEN) {
+  if (role === "browser") {
+    // handled above
+  } else if (token !== CONTROLLER_TOKEN) {
     ws.close(1008, "Unauthorized");
     return;
   }
@@ -683,7 +755,18 @@ wss.on("connection", (ws, request) => {
     reports: new Map()
   };
 
+  setControllerIdentity(client, {
+    base: queryBase,
+    name: queryName
+  });
+
   clients.add(client);
+
+  // A controller with base information in its WebSocket URL is immediately
+  // visible as connected, even before its first chamber report arrives.
+  if (client.base !== null) {
+    broadcastSnapshot();
+  }
 
   ws.on("message", raw => {
     let message;
