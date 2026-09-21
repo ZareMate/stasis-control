@@ -193,3 +193,35 @@ Pull resolution works like this:
 3. If the player exists at multiple bases without a default, the command returns the available bases and asks for a default to be configured on the dashboard.
 
 `PULL_API_TOKEN` is separate from the ComputerCraft `STASIS_TOKEN`.
+
+## Discord voice command
+
+The Discord bot also supports:
+
+```text
+/join
+```
+
+`/join` makes the bot join the voice channel of the user who issued the command. It listens only to that user's audio. The bot uses local Vosk speech recognition and checks for the phrase `Farex pull my pearl`; when the phrase is recognized, it calls the same player pull API used by `/pull player`, so Farex is resolved using the saved default base when applicable.
+
+The bot also supports `/leave` to leave the voice channel and stop listening.
+
+Install the voice/STT dependencies with `npm install`.
+
+Download the small English Vosk model:
+
+```bash
+bash bot/download-model.sh
+```
+
+The official Vosk model list describes `vosk-model-small-en-us-0.15` as a lightweight English model. citeturn220598search0
+
+The voice implementation uses `@discordjs/voice` to join and receive audio. Audio receive requires the connection to be joined without self-deafening. citeturn847460search0turn435780search3
+
+Set these optional variables to change the trigger:
+
+```env
+VOICE_TRIGGER=Farex pull my pearl
+VOICE_TRIGGER_PLAYER=Farex
+VOSK_MODEL_PATH=./models/vosk-model-small-en-us-0.15
+```
