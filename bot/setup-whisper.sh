@@ -30,12 +30,12 @@ cmake --build "$WHISPER_DIR/build" -j --config Release --target whisper-cli
 
 mkdir -p "$MODEL_DIR"
 
-if [ ! -f "$MODEL_DIR/ggml-tiny.en.bin" ]; then
-  echo "Downloading Whisper tiny.en model..."
-  bash "$WHISPER_DIR/models/download-ggml-model.sh" tiny.en
-  cp "$WHISPER_DIR/models/ggml-tiny.en.bin" "$MODEL_DIR/ggml-tiny.en.bin"
+if [ ! -f "$MODEL_DIR/ggml-large-v3-turbo.bin" ]; then
+  echo "Downloading Whisper large-v3-turbo model..."
+  bash "$WHISPER_DIR/models/download-ggml-model.sh" large-v3-turbo
+  cp "$WHISPER_DIR/models/ggml-large-v3-turbo.bin" "$MODEL_DIR/ggml-large-v3-turbo.bin"
 fi
 
 echo "Whisper STT ready."
 echo "Binary: $WHISPER_DIR/build/bin/whisper-cli"
-echo "Model:  $MODEL_DIR/ggml-tiny.en.bin"
+echo "Model:  $MODEL_DIR/ggml-large-v3-turbo.bin"
