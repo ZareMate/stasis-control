@@ -231,11 +231,30 @@ local function connect()
     local url =
         SERVER ..
         "?role=controller" ..
-        "&name=" .. encode(CONTROLLER_NAME) ..
-        "&base=" .. encode(BASE_ID) ..
         "&token=" .. encode(TOKEN)
 
-    return http.websocket(url)
+    local ws, err = http.websocket(url)
+
+    if not ws then
+        return nil, err
+    end
+
+    local registered = sendMessage(ws, {
+        type = "register",
+        controller = CONTROLLER_NAME,
+        base = BASE_ID,
+        baseName = "Base " .. tostring(BASE_ID)
+    })
+
+    if not registered then
+        pcall(function()
+            ws.close()
+        end)
+
+        return nil, "Failed to send controller registration"
+    end
+
+    return ws
 end
 
 while true do
