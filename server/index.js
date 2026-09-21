@@ -19,6 +19,7 @@ const clients = new Set();
 const logs = [];
 const statuses = new Map();
 const pullTimers = new Map();
+const playerCounts = new Map();
 
 const CONTROLLER_TOKEN = process.env.STASIS_TOKEN;
 const PORT = Number(process.env.PORT || config.server.port);
@@ -62,6 +63,10 @@ function controllerCount() {
 
 function browserCount() {
   return [...clients].filter(client => client.role === "browser").length;
+}
+
+function reportedPlayerCount() {
+  return [...playerCounts.values()].reduce((total, count) => total + count, 0);
 }
 
 function addLog(type, chamber, player, detail) {
@@ -118,10 +123,12 @@ function snapshot() {
     logs,
     controllers: controllerCount(),
     browsers: browserCount(),
+    playerCount: reportedPlayerCount(),
     controllerDetails: controllers().map(client => ({
       name: client.controllerName,
       base: client.base,
-      connectedAt: client.connectedAt
+      connectedAt: client.connectedAt,
+      playerCount: playerCounts.get(client.controllerName) ?? null
     }))
   };
 }
@@ -236,7 +243,43 @@ function updateChamberFromController(client, input) {
   }
 }
 
+function updatePlayerCount(client, value) {
+  const count = Number(value);
+
+  if (!Number.isInteger(count) || count < 0) {
+    console.warn(
+      "[WS] Ignoring invalid player count from " +
+      client.controllerName +
+      ": " +
+      value
+    );
+    return;
+  }
+
+  playerCounts.set(client.controllerName, count);
+
+  broadcast({
+    type: "player-count",
+    playerCount: reportedPlayerCount()
+  });
+}
+
 function processControllerMessage(client, message) {
+  if (
+    message.type === "player-count" ||
+    message.type === "playerCount" ||
+    message.type === "players"
+  ) {
+    if (Array.isArray(message.players)) {
+      updatePlayerCount(client, message.players.length);
+    } else if (message.playerCount !== undefined) {
+      updatePlayerCount(client, message.playerCount);
+    } else if (message.count !== undefined) {
+      updatePlayerCount(client, message.count);
+    }
+    return;
+  }
+
   if (message.type === "status") {
     updateChamberFromController(client, message);
     return;
@@ -452,6 +495,7 @@ wss.on("connection", (ws, request) => {
   };
 
   clients.add(client);
+  playerCounts.set(controllerName, 0);
   markControllerOnline(base.id, controllerName);
 
   safeSend(ws, {
@@ -485,6 +529,7 @@ wss.on("connection", (ws, request) => {
 
   ws.on("close", () => {
     clients.delete(client);
+    playerCounts.delete(client.controllerName);
 
     const stillConnected = controllers().some(
       current => current.base === client.base
@@ -499,6 +544,10 @@ wss.on("connection", (ws, request) => {
         client.controllerName + " disconnected from " + base.name
       );
       broadcastSnapshot();
+      broadcast({
+        type: "player-count",
+        playerCount: reportedPlayerCount()
+      });
     } else {
       broadcast({
         type: "connections",
