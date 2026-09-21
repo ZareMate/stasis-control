@@ -4,6 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
+const { monitorEventLoopDelay } = require("perf_hooks");
 
 const {
   Client,
@@ -112,6 +113,31 @@ const client = new Client({
 const voiceSessions = new Map();
 let cachedPlayers = [];
 let refreshingPlayers = false;
+const eventLoopMonitor = monitorEventLoopDelay({
+  resolution: 20
+});
+
+eventLoopMonitor.enable();
+
+function logInteractionTiming(interaction) {
+  const ageMs = Date.now() - interaction.createdTimestamp;
+
+  console.log(
+    "[Discord] Interaction received:",
+    {
+      command: interaction.commandName,
+      ageMs,
+      gatewayPing: client.ws.ping,
+      eventLoopMaxDelayMs:
+        Math.round(eventLoopMonitor.max / 1e6)
+    }
+  );
+
+  eventLoopMonitor.reset();
+
+  return ageMs;
+}
+
 
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
@@ -226,6 +252,7 @@ async function acknowledgeCommand(interaction, content) {
       status: error?.status,
       command: interaction.commandName,
       ageMs: Date.now() - interaction.createdTimestamp,
+      gatewayPing: client.ws.ping,
       error: error?.message || String(error)
     });
 
@@ -646,6 +673,15 @@ async function joinVoice(interaction) {
 }
 
 client.on("interactionCreate", async interaction => {
+  const ageMs = logInteractionTiming(interaction);
+
+  if (ageMs > 2500) {
+    console.warn(
+      "[Discord] Interaction arrived too late for a reliable acknowledgement:",
+      ageMs + "ms"
+    );
+  }
+
   if (interaction.isAutocomplete()) {
     const query =
       interaction.options
@@ -835,6 +871,16 @@ function shutdown() {
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+
+setInterval(() => {
+  console.log(
+    "[Discord] Gateway ping:",
+    client.ws.ping + "ms",
+    "| Event-loop max delay:",
+    Math.round(eventLoopMonitor.max / 1e6) + "ms"
+  );
+  eventLoopMonitor.reset();
+}, 30000);
 
 process.on("unhandledRejection", error => {
   console.error("[Discord] Unhandled promise rejection:", error);
