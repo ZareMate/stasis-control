@@ -37,16 +37,25 @@ const STASIS_API_URL = (
 const PULL_API_TOKEN =
   process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN;
 
-const WHISPER_CLI_PATH =
-  process.env.WHISPER_CLI_PATH ||
+const WHISPER_SERVER_PATH =
+  process.env.WHISPER_SERVER_PATH ||
   path.join(
     __dirname,
     "..",
     "whisper.cpp",
     "build",
     "bin",
-    "whisper-cli"
+    "whisper-server"
   );
+
+const WHISPER_SERVER_PORT = Number(
+  process.env.WHISPER_SERVER_PORT || 39781
+);
+
+const WHISPER_SERVER_URL = (
+  process.env.WHISPER_SERVER_URL ||
+  "http://127.0.0.1:" + WHISPER_SERVER_PORT
+).replace(/\/+$/, "");
 
 const WHISPER_MODEL_PATH =
   process.env.WHISPER_MODEL_PATH ||
@@ -122,6 +131,11 @@ const eventLoopMonitor = monitorEventLoopDelay({
 });
 
 eventLoopMonitor.enable();
+
+let whisperServerProcess = null;
+let whisperServerReady = false;
+let whisperServerStartPromise = null;
+let shuttingDown = false;
 
 function logInteractionTiming(interaction) {
   const ageMs = Date.now() - interaction.createdTimestamp;
@@ -530,94 +544,232 @@ function writeWav(filePath, pcm) {
   );
 }
 
-function runWhisper(wavPath) {
-  return new Promise((resolve, reject) => {
-    if (!fs.existsSync(WHISPER_CLI_PATH)) {
-      reject(
-        new Error(
-          "whisper-cli not found at " +
-            WHISPER_CLI_PATH +
-            ". Run bot/setup-whisper.sh or set WHISPER_CLI_PATH."
-        )
+async function waitForWhisperServer(timeoutMs = 60000) {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (
+      whisperServerProcess &&
+      whisperServerProcess.exitCode !== null
+    ) {
+      throw new Error(
+        "whisper-server exited with code " +
+          whisperServerProcess.exitCode
       );
-      return;
+    }
+
+    try {
+      const response = await fetch(
+        WHISPER_SERVER_URL + "/",
+        {
+          signal: AbortSignal.timeout(1000)
+        }
+      );
+
+      if (response.ok) {
+        whisperServerReady = true;
+        return;
+      }
+    } catch {}
+
+    await new Promise(resolve =>
+      setTimeout(resolve, 250)
+    );
+  }
+
+  throw new Error(
+    "Timed out waiting for whisper-server at " +
+      WHISPER_SERVER_URL
+  );
+}
+
+async function startWhisperServer() {
+  if (whisperServerReady && whisperServerProcess) {
+    return;
+  }
+
+  if (whisperServerStartPromise) {
+    return whisperServerStartPromise;
+  }
+
+  whisperServerStartPromise = (async () => {
+    if (!fs.existsSync(WHISPER_SERVER_PATH)) {
+      throw new Error(
+        "whisper-server not found at " +
+          WHISPER_SERVER_PATH +
+          ". Run bot/setup-whisper.sh or set WHISPER_SERVER_PATH."
+      );
     }
 
     if (!fs.existsSync(WHISPER_MODEL_PATH)) {
-      reject(
-        new Error(
-          "Whisper model not found at " +
-            WHISPER_MODEL_PATH +
-            ". Run bot/setup-whisper.sh or set WHISPER_MODEL_PATH."
-        )
+      throw new Error(
+        "Whisper model not found at " +
+          WHISPER_MODEL_PATH +
+          ". Run bot/setup-whisper.sh or set WHISPER_MODEL_PATH."
       );
-      return;
     }
 
-    const args = [
-      "-m",
-      WHISPER_MODEL_PATH,
-      "-f",
-      wavPath,
-      "-l",
-      "en",
-      "-nt",
-      "-np",
-      "-bo",
-      "1",
-      "-bs",
-      "1",
-      "-nf",
-      "-t",
-      WHISPER_THREADS
-    ];
+    if (
+      whisperServerProcess &&
+      whisperServerProcess.exitCode === null
+    ) {
+      whisperServerProcess.kill("SIGTERM");
+    }
 
-    const process = spawn(
-      WHISPER_CLI_PATH,
-      args,
+    whisperServerReady = false;
+
+    console.log(
+      "[STT] Starting persistent whisper-server..."
+    );
+
+    whisperServerProcess = spawn(
+      WHISPER_SERVER_PATH,
+      [
+        "-m",
+        WHISPER_MODEL_PATH,
+        "-t",
+        WHISPER_THREADS,
+        "-p",
+        "1",
+        "-bo",
+        "1",
+        "-bs",
+        "1",
+        "-nf",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        String(WHISPER_SERVER_PORT)
+      ],
       {
         stdio: ["ignore", "pipe", "pipe"]
       }
     );
 
-    let stdout = "";
-    let stderr = "";
+    whisperServerProcess.stdout.on(
+      "data",
+      chunk => {
+        const output = chunk
+          .toString()
+          .trim();
 
-    process.stdout.on("data", chunk => {
-      stdout += chunk.toString();
-    });
-
-    process.stderr.on("data", chunk => {
-      stderr += chunk.toString();
-    });
-
-    process.on("error", error => {
-      reject(error);
-    });
-
-    process.on("close", code => {
-      const text = stdout
-        .split(/\r?\n/)
-        .map(line => line.trim())
-        .filter(Boolean)
-        .join(" ");
-
-      if (code !== 0) {
-        reject(
-          new Error(
-            "whisper-cli exited with code " +
-              code +
-              (stderr.trim()
-                ? ": " + stderr.trim().slice(-500)
-                : "")
-          )
-        );
-        return;
+        if (output) {
+          console.log("[WHISPER] " + output);
+        }
       }
+    );
 
-      resolve(normalizeSpeech(text));
-    });
-  });
+    whisperServerProcess.stderr.on(
+      "data",
+      chunk => {
+        const output = chunk
+          .toString()
+          .trim();
+
+        if (output) {
+          console.log("[WHISPER] " + output);
+        }
+      }
+    );
+
+    whisperServerProcess.on(
+      "error",
+      error => {
+        whisperServerReady = false;
+        console.error(
+          "[STT] whisper-server process error:",
+          error.message
+        );
+      }
+    );
+
+    whisperServerProcess.on(
+      "exit",
+      (code, signal) => {
+        const wasExpected = shuttingDown;
+
+        whisperServerReady = false;
+        whisperServerProcess = null;
+
+        if (!wasExpected) {
+          console.error(
+            "[STT] whisper-server stopped:",
+            { code, signal }
+          );
+        }
+      }
+    );
+
+    await waitForWhisperServer();
+    console.log(
+      "[STT] Persistent Whisper server ready at " +
+        WHISPER_SERVER_URL
+    );
+  })();
+
+  try {
+    await whisperServerStartPromise;
+  } finally {
+    whisperServerStartPromise = null;
+  }
+}
+
+async function transcribeViaWhisperServer(wavPath) {
+  await startWhisperServer();
+
+  const form = new FormData();
+  form.append(
+    "file",
+    new Blob(
+      [fs.readFileSync(wavPath)],
+      { type: "audio/wav" }
+    ),
+    path.basename(wavPath)
+  );
+  form.append("response_format", "json");
+  form.append("language", "en");
+  form.append("temperature", "0.0");
+  form.append("temperature_inc", "0.2");
+  form.append("best_of", "1");
+  form.append("beam_size", "1");
+  form.append("no_timestamps", "true");
+  form.append("no_context", "true");
+  form.append("no_language_probabilities", "true");
+  form.append("suppress_nst", "true");
+
+  const response = await fetch(
+    WHISPER_SERVER_URL + "/inference",
+    {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.timeout(30000)
+    }
+  );
+
+  const bodyText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(
+      "whisper-server returned HTTP " +
+        response.status +
+        ": " +
+        bodyText.slice(-500)
+    );
+  }
+
+  let result;
+
+  try {
+    result = JSON.parse(bodyText);
+  } catch {
+    return normalizeSpeech(bodyText);
+  }
+
+  return normalizeSpeech(
+    typeof result === "string"
+      ? result
+      : result.text || ""
+  );
 }
 
 async function transcribePcm(pcm) {
@@ -636,7 +788,7 @@ async function transcribePcm(pcm) {
 
   try {
     writeWav(tempPath, pcm);
-    return await runWhisper(tempPath);
+    return await transcribeViaWhisperServer(tempPath);
   } finally {
     try {
       fs.unlinkSync(tempPath);
@@ -1035,7 +1187,10 @@ client.once("clientReady", async () => {
       VOICE_TRIGGER_PLAYER
   );
   console.log(
-    "Whisper CLI: " + WHISPER_CLI_PATH
+    "Whisper server: " + WHISPER_SERVER_PATH
+  );
+  console.log(
+    "Whisper server URL: " + WHISPER_SERVER_URL
   );
   console.log(
     "Whisper model: " + WHISPER_MODEL_PATH
@@ -1046,16 +1201,13 @@ client.once("clientReady", async () => {
 
   void testDiscordRest();
 
-  if (!fs.existsSync(WHISPER_CLI_PATH)) {
+  try {
+    await startWhisperServer();
+  } catch (error) {
     console.error(
-      "[STT] whisper-cli is not installed. Run bot/setup-whisper.sh."
+      "[STT] Failed to start persistent Whisper server:",
+      error.message
     );
-  } else if (!fs.existsSync(WHISPER_MODEL_PATH)) {
-    console.error(
-      "[STT] Whisper model is not installed. Run bot/setup-whisper.sh."
-    );
-  } else {
-    console.log("[STT] Whisper STT is ready");
   }
 
   await refreshPlayers();
@@ -1066,8 +1218,22 @@ client.once("clientReady", async () => {
 });
 
 function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
   for (const guildId of [...voiceSessions.keys()]) {
     destroyVoiceSession(guildId);
+  }
+
+  if (
+    whisperServerProcess &&
+    whisperServerProcess.exitCode === null
+  ) {
+    console.log("[STT] Stopping persistent Whisper server...");
+
+    try {
+      whisperServerProcess.kill("SIGTERM");
+    } catch {}
   }
 
   client.destroy();
@@ -1096,6 +1262,10 @@ process.on("uncaughtException", error => {
 });
 
 (async () => {
+  await startWhisperServer();
   await registerCommands();
   await client.login(DISCORD_TOKEN);
-})();
+})().catch(error => {
+  console.error("[FATAL] Bot startup failed:", error);
+  shutdown();
+});
