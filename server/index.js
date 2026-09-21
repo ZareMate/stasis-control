@@ -121,7 +121,8 @@ function resolvePlayerChamber(player, requestedBase = null) {
         error: 409,
         message:
           "Player is not reported at their default base",
-        availableBases: available
+        availableBases: available,
+        defaultBase: base
       };
     }
 
