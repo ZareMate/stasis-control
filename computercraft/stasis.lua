@@ -11,41 +11,6 @@ local BASE_ID = 1
 
 local PULSE_TIME = 0.20
 
--- Report the number of players known by this controller.
--- If your controller has a separate live player-count source, replace
--- this function with that value.
-local function getPlayerCount()
-    local count = 0
-    for _, entry in ipairs(RELAYS) do
-        if entry.player and entry.player ~= "" then
-            count = count + 1
-        end
-    end
-    return count
-end
-
--- Base 1 chamber layout:
---
--- LEFT                                      RIGHT
--- Fobablo | Armadillo122 | GRI_9 | 4e6qr | ZareMate | Shark107 | Piotrusek69
--- relay 6 | relay 5       | relay 4| relay 3| relay 2 | relay 1 | relay 0
---
--- Relay 0 is the chamber on the far right.
-
-local RELAYS = {
-    { chamber = 1, player = "Piotrusek69", relay = "redstone_relay_0" },
-    { chamber = 2, player = "Shark107", relay = "redstone_relay_1" },
-    { chamber = 3, player = "ZareMate", relay = "redstone_relay_2" },
-    { chamber = 4, player = "4e6qr", relay = "redstone_relay_3" },
-    { chamber = 5, player = "GRI_9", relay = "redstone_relay_4" },
-    { chamber = 6, player = "Armadillo122", relay = "redstone_relay_5" },
-    { chamber = 7, player = "Fobablo", relay = "redstone_relay_6" },
-}
-
-local function encode(value)
-    return textutils.urlEncode(tostring(value))
-end
-
 local function findRelay(player)
     for _, entry in ipairs(RELAYS) do
         if string.lower(entry.player) == string.lower(player) then
@@ -205,11 +170,6 @@ local function handlePull(ws, command)
 end
 
 local function announceConfiguredPlayers(ws)
-    sendMessage(ws, {
-        type = "player-count",
-        playerCount = getPlayerCount()
-    })
-
     for _, entry in ipairs(RELAYS) do
         local relay = getRelayPeripheral(entry.relay)
 
