@@ -193,35 +193,41 @@ Pull resolution works like this:
 3. If the player exists at multiple bases without a default, the command returns the available bases and asks for a default to be configured on the dashboard.
 
 `PULL_API_TOKEN` is separate from the ComputerCraft `STASIS_TOKEN`.
-
 ## Discord voice command
 
-The Discord bot also supports:
+The Discord bot supports `/join` and `/leave`.
 
-```text
-/join
-```
+`/join` makes the bot join the voice channel of the user who issued the command. It listens only to that user's audio.
 
-`/join` makes the bot join the voice channel of the user who issued the command. It listens only to that user's audio. The bot uses local Vosk speech recognition and checks for the phrase `Farex pull my pearl`; when the phrase is recognized, it calls the same player pull API used by `/pull player`, so Farex is resolved using the saved default base when applicable.
+Speech recognition uses local `whisper.cpp`. The Node bot invokes the `whisper-cli` executable, so the bot does not depend on the old Vosk Node FFI addon.
 
-The bot also supports `/leave` to leave the voice channel and stop listening.
-
-Install the voice/STT dependencies with `npm install`.
-
-Download the small English Vosk model:
+Set up Whisper:
 
 ```bash
-bash bot/download-model.sh
+npm install
+npm run stt:setup
 ```
 
-The official Vosk model list describes `vosk-model-small-en-us-0.15` as a lightweight English model.
+The setup script clones `whisper.cpp`, builds `whisper-cli`, and downloads the `tiny.en` model. The official whisper.cpp documentation shows the same build flow and its `download-ggml-model.sh` model downloader. citeturn754375search1turn754375search0
 
-The voice implementation uses `@discordjs/voice` to join and receive audio. Audio receive requires the connection to be joined without self-deafening.
+The bot then listens for:
 
-Set these optional variables to change the trigger:
+```text
+Farex pull my pearl
+```
+
+and triggers the existing pull API for `Farex`, using the saved default base.
+
+Change the trigger with:
 
 ```env
 VOICE_TRIGGER=Farex pull my pearl
 VOICE_TRIGGER_PLAYER=Farex
-VOSK_MODEL_PATH=./models/vosk-model-small-en-us-0.15
+WHISPER_CLI_PATH=./whisper.cpp/build/bin/whisper-cli
+WHISPER_MODEL_PATH=./models/ggml-tiny.en.bin
+WHISPER_THREADS=4
 ```
+
+The `whisper-cli` tool accepts 16-bit WAV input; the bot converts Discord's decoded PCM stream into a temporary 16-bit, 16 kHz mono WAV file before transcription. citeturn754375search1turn754375search3
+
+`/leave` disconnects the bot and stops voice recognition.
