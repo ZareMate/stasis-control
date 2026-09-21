@@ -4,6 +4,8 @@ let pending = null;
 let timer = null;
 
 const $ = id => document.getElementById(id);
+const PLAYER_STORAGE_KEY = "stasis-player";
+let configBaseFromServer = null;
 
 async function load() {
   try {
@@ -60,6 +62,23 @@ function connect() {
         Object.assign(chamber, message.state);
       } else {
         state.chambers.push(message.state);
+
+        let base = state.bases.find(
+          item => Number(item.id) === Number(message.state.base)
+        );
+
+        if (!base) {
+          base = {
+            id: message.state.base,
+            name: message.state.baseName || "Base " + message.state.base,
+            chambers: []
+          };
+          state.bases.push(base);
+        }
+
+        if (!base.chambers.includes(message.state.key)) {
+          base.chambers.push(message.state.key);
+        }
       }
 
       if (Number.isInteger(message.playerCount)) {
@@ -246,25 +265,139 @@ async function pull() {
   }
 }
 
-function toast(message) {
-  const element = $("toast");
+function openConfig() {
+  const savedPlayer = localStorage.getItem(PLAYER_STORAGE_KEY) || "";
+  $("configPlayer").value = savedPlayer;
+  $("configStatus").textContent = "";
 
-  element.textContent = message;
-  element.classList.remove("hidden");
+  populateConfigBases();
 
-  clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => {
-    element.classList.add("hidden");
-  }, 3500);
+  $("configModal").classList.remove("hidden");
+  $("configPlayer").focus();
+
+  if (savedPlayer) {
+    loadPreference(savedPlayer);
+  }
 }
 
-function esc(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function closeConfig() {
+  $("configModal").classList.add("hidden");
+}
+
+function populateConfigBases(selected = configBaseFromServer) {
+  const select = $("configBase");
+  const bases = [...(state?.bases || [])];
+
+  select.innerHTML = "";
+
+  if (selected !== null && selected !== undefined &&
+      !bases.some(base => Number(base.id) === Number(selected))) {
+    bases.push({
+      id: Number(selected),
+      name: "Base " + selected + " (offline)"
+    });
+  }
+
+  bases.sort((a, b) => Number(a.id) - Number(b.id));
+
+  if (!bases.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No bases connected";
+    select.appendChild(option);
+    select.disabled = true;
+    $("configSave").disabled = true;
+    return;
+  }
+
+  select.disabled = false;
+  $("configSave").disabled = false;
+
+  for (const base of bases) {
+    const option = document.createElement("option");
+    option.value = String(base.id);
+    option.textContent =
+      base.name + (base.chambers ? " • " + base.chambers.length + " chambers" : "");
+    select.appendChild(option);
+  }
+
+  if (selected !== null && selected !== undefined) {
+    select.value = String(selected);
+  }
+}
+
+async function loadPreference(player) {
+  try {
+    const response = await fetch(
+      "/api/preference?player=" + encodeURIComponent(player),
+      { cache: "no-store" }
+    );
+
+    if (!response.ok) return;
+
+    const result = await response.json();
+    configBaseFromServer = result.defaultBase;
+
+    if (result.defaultBase !== null && result.defaultBase !== undefined) {
+      populateConfigBases(result.defaultBase);
+    }
+
+    $("configStatus").textContent =
+      result.defaultBase === null || result.defaultBase === undefined
+        ? "No default base saved yet."
+        : "Saved default: Base " + result.defaultBase;
+  } catch {
+    $("configStatus").textContent = "Unable to load saved configuration.";
+  }
+}
+
+async function saveConfig() {
+  const player = $("configPlayer").value.trim();
+  const defaultBase = Number($("configBase").value);
+
+  if (!player) {
+    $("configStatus").textContent = "Enter your Minecraft player name.";
+    $("configPlayer").focus();
+    return;
+  }
+
+  if (!Number.isInteger(defaultBase)) {
+    $("configStatus").textContent = "Select a base.";
+    return;
+  }
+
+  $("configSave").disabled = true;
+
+  try {
+    const response = await fetch("/api/preference", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        player,
+        defaultBase
+      })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      $("configStatus").textContent =
+        result.error || "Unable to save configuration.";
+      return;
+    }
+
+    localStorage.setItem(PLAYER_STORAGE_KEY, player);
+    configBaseFromServer = result.defaultBase;
+    $("configStatus").textContent =
+      "Saved. Discord /pull will use Base " + result.defaultBase + " for " + player + ".";
+    toast("Default base saved");
+  } catch {
+    $("configStatus").textContent = "Unable to contact server.";
+  } finally {
+    $("configSave").disabled = false;
+  }
 }
 
 $("cancel").onclick = close;
@@ -275,6 +408,28 @@ $("modal").onclick = event => {
     close();
   }
 };
+
+$("configButton").onclick = openConfig;
+$("configCancel").onclick = closeConfig;
+$("configSave").onclick = saveConfig;
+
+$("configModal").onclick = event => {
+  if (event.target === $("configModal")) {
+    closeConfig();
+  }
+};
+
+$("configPlayer").addEventListener("input", () => {
+  configBaseFromServer = null;
+});
+
+$("configPlayer").addEventListener("change", () => {
+  const player = $("configPlayer").value.trim();
+
+  if (player) {
+    loadPreference(player);
+  }
+});
 
 load();
 connect();
