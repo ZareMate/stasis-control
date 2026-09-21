@@ -251,7 +251,8 @@ function snapshot() {
       name: client.controllerName,
       base: client.base,
       baseName: client.baseName,
-      connectedAt: client.connectedAt
+      connectedAt: client.connectedAt,
+      lastHeartbeat: client.lastHeartbeat || null
     }))
   };
 }
@@ -422,6 +423,17 @@ function updateChamberFromController(client, input) {
 
 function processControllerMessage(client, message) {
   if (!message || typeof message !== "object") {
+    return;
+  }
+
+  if (message.type === "heartbeat") {
+    client.lastHeartbeat = Date.now();
+
+    safeSend(client.ws, {
+      type: "heartbeat-ack",
+      id: message.id ?? null
+    });
+
     return;
   }
 
@@ -765,7 +777,8 @@ wss.on("connection", (ws, request) => {
     base: null,
     baseName: null,
     controllerName: null,
-    reports: new Map()
+    reports: new Map(),
+    lastHeartbeat: Date.now()
   };
 
   setControllerIdentity(client, {
