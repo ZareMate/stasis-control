@@ -66,6 +66,17 @@ function defaultBaseForPlayer(player) {
   return Number.isInteger(Number(value)) ? Number(value) : null;
 }
 
+function chamberPreference(report) {
+  const defaultBase = defaultBaseForPlayer(report.player);
+
+  return {
+    defaultBase,
+    isDefaultChamber:
+      defaultBase !== null &&
+      Number(report.base) === Number(defaultBase)
+  };
+}
+
 function findPlayerReports(player) {
   const wanted = playerKey(player);
 
@@ -491,7 +502,8 @@ function snapshot() {
       player: report.player,
       status: report.status,
       controller: report.sourceControllerName,
-      reportedAt: report.updatedAt
+      reportedAt: report.updatedAt,
+      ...chamberPreference(report)
     }));
 
   const result = {
@@ -681,7 +693,8 @@ function updateChamberFromController(client, input) {
       player: effective.player,
       status: effective.status,
       controller: effective.sourceControllerName,
-      reportedAt: effective.updatedAt
+      reportedAt: effective.updatedAt,
+      ...chamberPreference(effective)
     },
     playerCount: reportedPlayerCount()
   });
@@ -918,6 +931,7 @@ app.post("/api/preference", (req, res) => {
     };
 
     savePreferences();
+    broadcastSnapshot();
 
     return res.json({
       ok: true,
