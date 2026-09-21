@@ -76,7 +76,7 @@ function reportedPlayerCount() {
       return (
         typeof current.player === "string" &&
         current.player.trim() !== "" &&
-        ["ready", "pulling"].includes(current.status)
+        ["ready", "pulling", "pulled"].includes(current.status)
       );
     }).length;
   }, 0);
@@ -253,8 +253,34 @@ function updateChamberFromController(client, input) {
 
   statuses.set(chamber.id, next);
 
-  if (next.status === "ready" || next.status === "pulled") {
+  if (next.status === "ready") {
     clearPullTimer(chamber.id);
+  } else if (next.status === "pulled") {
+    clearPullTimer(chamber.id);
+
+    // Keep the chamber in PULLED state briefly so the dashboard can show
+    // that the pearl was just pulled, then return it to READY automatically.
+    pullTimers.set(
+      chamber.id,
+      setTimeout(() => {
+        const current = statuses.get(chamber.id);
+
+        if (!current || current.status !== "pulled") return;
+
+        const ready = {
+          ...current,
+          status: "ready"
+        };
+
+        statuses.set(chamber.id, ready);
+
+        broadcast({
+          type: "chamber",
+          chamber: chamber.id,
+          state: ready
+        });
+      }, 5000)
+    );
   }
 
   broadcast({
