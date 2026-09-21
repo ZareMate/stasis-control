@@ -20,13 +20,13 @@ if [ ! -d "$WHISPER_DIR/.git" ]; then
   git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git "$WHISPER_DIR"
 fi
 
-echo "Building whisper-cli..."
+echo "Building whisper-server..."
 if [ -n "${WHISPER_CMAKE_ARGS:-}" ]; then
   cmake -S "$WHISPER_DIR" -B "$WHISPER_DIR/build" $WHISPER_CMAKE_ARGS
 else
   cmake -S "$WHISPER_DIR" -B "$WHISPER_DIR/build"
 fi
-cmake --build "$WHISPER_DIR/build" -j --config Release --target whisper-cli
+cmake --build "$WHISPER_DIR/build" -j --config Release --target whisper-server
 
 mkdir -p "$MODEL_DIR"
 
@@ -37,5 +37,5 @@ if [ ! -f "$MODEL_DIR/ggml-large-v3-turbo.bin" ]; then
 fi
 
 echo "Whisper STT ready."
-echo "Binary: $WHISPER_DIR/build/bin/whisper-cli"
+echo "Server: $WHISPER_DIR/build/bin/whisper-server"
 echo "Model:  $MODEL_DIR/ggml-large-v3-turbo.bin"
