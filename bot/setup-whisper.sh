@@ -16,6 +16,12 @@ if ! command -v cmake >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "ffmpeg is required for Discord voice audio conversion"
+  echo "Install it with: sudo apt install ffmpeg"
+  exit 1
+fi
+
 if [ ! -d "$WHISPER_DIR/.git" ]; then
   echo "Cloning whisper.cpp..."
   git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git "$WHISPER_DIR"
