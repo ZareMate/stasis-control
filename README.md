@@ -199,7 +199,7 @@ The Discord bot supports `/join` and `/leave`.
 
 `/join` makes the bot join the voice channel of the user who issued the command. It listens only to that user's audio.
 
-Speech recognition uses local `whisper.cpp`. The Node bot invokes the `whisper-cli` executable, so the bot does not depend on the old Vosk Node FFI addon.
+Speech recognition uses local `whisper.cpp`. The bot starts a persistent `whisper-server` process when it starts and keeps the model loaded until the bot shuts down. Each voice clip is then sent to that already-running server instead of starting a new Whisper process.
 
 Set up Whisper:
 
@@ -224,13 +224,14 @@ Configure the trigger with:
 VOICE_TRIGGER=home
 VOICE_TRIGGER_PLAYER=Farex
 VOICE_SILENCE_MS=450
-WHISPER_CLI_PATH=./whisper.cpp/build/bin/whisper-cli
+WHISPER_SERVER_PATH=./whisper.cpp/build/bin/whisper-server
+WHISPER_SERVER_PORT=39781
 WHISPER_MODEL_PATH=./models/ggml-large-v3-turbo.bin
 WHISPER_THREADS=4
 ```
 
 The single-word trigger also tolerates small Whisper transcription errors. Voice input is finalized after a short silence window (450 ms by default), and Whisper decoding uses a single best candidate with fallback disabled to reduce latency.
 
-The `whisper-cli` tool accepts 16-bit WAV input; the bot converts Discord's decoded PCM stream into a temporary 16-bit, 16 kHz mono WAV file before transcription. citeturn754375search1turn754375search3
+The Whisper server accepts WAV files through its `/inference` HTTP endpoint. The bot converts Discord's decoded PCM stream into a temporary 16-bit, 16 kHz mono WAV file and sends it to the persistent server. citeturn957550search1turn426544view0
 
 `/leave` disconnects the bot and stops voice recognition.
