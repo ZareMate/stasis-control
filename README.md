@@ -231,6 +231,6 @@ WHISPER_BEST_OF=10
 WHISPER_PROMPT=Farex. Pull my pearl. Ender pearl. Stasis chamber. Minecraft.
 ```
 
-The `whisper-cli` tool accepts 16-bit WAV input; the bot converts Discord's decoded PCM stream into a temporary 16-bit, 16 kHz mono WAV file before transcription. The bot also uses beam search/best-of settings and an initial prompt containing the trigger vocabulary; current whisper.cpp CLI documentation exposes `--beam-size`, `--best-of`, and `--prompt`. citeturn788385search0turn146732search4 citeturn754375search1turn754375search3
+The `whisper-cli` tool accepts 16-bit WAV input; the bot packages Discord's native 48 kHz stereo Opus stream into a standard OGG/Opus file before transcription, which avoids hand-written WAV header/sample-rate mismatches. The bot also uses beam search/best-of settings and an initial prompt containing the trigger vocabulary; current whisper.cpp CLI documentation exposes `--beam-size`, `--best-of`, and `--prompt`. citeturn788385search0turn146732search4 citeturn754375search1turn754375search3
 
 `/leave` disconnects the bot and stops voice recognition. Trigger matching is tolerant of common Whisper variations such as splitting `Farex` into multiple words, while still requiring the `pull` and `pearl` parts of the command.
