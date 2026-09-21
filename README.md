@@ -118,3 +118,28 @@ Do not commit the real controller token.
 Set `STASIS_TOKEN` on the server and use the same value in ComputerCraft. Browser clients do not receive the controller token.
 
 For public deployment, use HTTPS and an authentication layer before exposing pull controls.
+## ComputerCraft monitor and heartbeat
+
+The included controller automatically uses the first connected ComputerCraft monitor peripheral (`peripheral.find("monitor")`).
+
+The monitor shows the controller/base, WebSocket connection state, heartbeat state, chamber totals, and each configured chamber's player and status.
+
+The controller sends a WebSocket heartbeat every 10 seconds and expects an acknowledgement within 5 seconds. A missed acknowledgement causes the controller to close the WebSocket and reconnect.
+
+Heartbeat request:
+
+```json
+{
+  "type": "heartbeat",
+  "id": 1
+}
+```
+
+Heartbeat response:
+
+```json
+{
+  "type": "heartbeat-ack",
+  "id": 1
+}
+```
