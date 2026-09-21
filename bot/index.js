@@ -54,7 +54,7 @@ const WHISPER_MODEL_PATH =
     __dirname,
     "..",
     "models",
-    "ggml-tiny.en.bin"
+    "ggml-large-v3-turbo.bin"
   );
 
 const WHISPER_THREADS = String(
