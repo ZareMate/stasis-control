@@ -524,15 +524,8 @@ function runWhisper(wavPath) {
       WHISPER_PROMPT
     ];
 
-    console.log(
-      "[STT] Whisper audio decoder: miniaudio first, FFmpeg fallback"
-    );
-
     const child = spawn(WHISPER_CLI_PATH, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env
-      }
+      stdio: ["ignore", "pipe", "pipe"]
     });
 
     let stdout = "";
