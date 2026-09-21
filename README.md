@@ -214,9 +214,9 @@ Download the small English Vosk model:
 bash bot/download-model.sh
 ```
 
-The official Vosk model list describes `vosk-model-small-en-us-0.15` as a lightweight English model. citeturn220598search0
+The official Vosk model list describes `vosk-model-small-en-us-0.15` as a lightweight English model.
 
-The voice implementation uses `@discordjs/voice` to join and receive audio. Audio receive requires the connection to be joined without self-deafening. citeturn847460search0turn435780search3
+The voice implementation uses `@discordjs/voice` to join and receive audio. Audio receive requires the connection to be joined without self-deafening.
 
 Set these optional variables to change the trigger:
 
