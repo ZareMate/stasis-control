@@ -333,7 +333,7 @@ function render() {
         (chamber.isDefaultChamber
           ? '<div class="default-chamber">DEFAULT CHAMBER</div>'
           : "") +
-        '<button class="pull" '
+        '<button class="pull" ' +
           (canPull ? "" : "disabled") +
         ">PULL PEARL</button>";
 
