@@ -443,8 +443,7 @@ function runWhisper(wavPath) {
       reject(
         new Error(
           "whisper-cli not found at " +
-            WHISPER_CLI_PATH +
-            ". Run bot/setup-whisper.sh or set WHISPER_CLI_PATH."
+            WHISPER_CLI_PATH
         )
       );
       return;
@@ -454,8 +453,7 @@ function runWhisper(wavPath) {
       reject(
         new Error(
           "Whisper model not found at " +
-            WHISPER_MODEL_PATH +
-            ". Run bot/setup-whisper.sh or set WHISPER_MODEL_PATH."
+            WHISPER_MODEL_PATH
         )
       );
       return;
@@ -527,52 +525,52 @@ function runWhisper(wavPath) {
   });
 }
 
-function convertPcm48StereoTo16Mono(pcm) {
-  const bytesPerFrame = 4;
-  const frameCount = Math.floor(pcm.length / bytesPerFrame);
+function convertDiscordPcmTo16Mono(pcm) {
+  const bytesPerFrame = 4; // 16-bit little-endian stereo
+  const inputFrames = Math.floor(pcm.length / bytesPerFrame);
 
-  if (!frameCount) {
+  if (inputFrames < 3) {
     return Buffer.alloc(0);
   }
 
-  const output = Buffer.alloc(
-    Math.floor(frameCount / 3) * 2
-  );
+  const outputFrames = Math.floor(inputFrames / 3);
+  const output = Buffer.alloc(outputFrames * 2);
 
-  let outOffset = 0;
+  let inputFrame = 0;
+  let outputOffset = 0;
 
-  for (let frame = 0; frame + 2 < frameCount; frame += 3) {
+  while (inputFrame + 2 < inputFrames) {
     let sum = 0;
 
+    // Average 3 source frames (48 kHz -> 16 kHz) and downmix stereo to mono.
     for (let i = 0; i < 3; i++) {
-      const offset = (frame + i) * bytesPerFrame;
-
+      const offset = (inputFrame + i) * bytesPerFrame;
       const left = pcm.readInt16LE(offset);
       const right = pcm.readInt16LE(offset + 2);
 
       sum += (left + right) / 2;
     }
 
-    const mono = Math.max(
+    const sample = Math.max(
       -32768,
       Math.min(32767, Math.round(sum / 3))
     );
 
-    output.writeInt16LE(mono, outOffset);
-    outOffset += 2;
+    output.writeInt16LE(sample, outputOffset);
+
+    inputFrame += 3;
+    outputOffset += 2;
   }
 
-  return output.subarray(0, outOffset);
+  return output;
 }
 
 function writeWav(filePath, pcm) {
   const sampleRate = 16000;
   const channels = 1;
   const bitsPerSample = 16;
-  const byteRate =
-    sampleRate * channels * bitsPerSample / 8;
-  const blockAlign =
-    channels * bitsPerSample / 8;
+  const blockAlign = channels * bitsPerSample / 8;
+  const byteRate = sampleRate * blockAlign;
 
   const header = Buffer.alloc(44);
 
@@ -601,7 +599,7 @@ async function transcribePcm(pcm) {
     return "";
   }
 
-  const audio = convertPcm48StereoTo16Mono(pcm);
+  const audio = convertDiscordPcmTo16Mono(pcm);
 
   if (!audio.length) {
     return "";
@@ -720,7 +718,10 @@ function startSpeechStream(session, userId) {
       return;
     }
 
-    if (session.cooldownUntil && Date.now() < session.cooldownUntil) {
+    if (
+      session.cooldownUntil &&
+      Date.now() < session.cooldownUntil
+    ) {
       return;
     }
 
