@@ -19,7 +19,7 @@ const clients = new Set();
 const logs = [];
 const statuses = new Map();
 const pullTimers = new Map();
-const playerCounts = new Map();
+const playerCounts = new Map(); // keyed by base id
 
 const CONTROLLER_TOKEN = process.env.STASIS_TOKEN;
 const PORT = Number(process.env.PORT || config.server.port);
@@ -128,7 +128,7 @@ function snapshot() {
       name: client.controllerName,
       base: client.base,
       connectedAt: client.connectedAt,
-      playerCount: playerCounts.get(client.controllerName) ?? null
+      playerCount: playerCounts.get(client.base) ?? null
     }))
   };
 }
@@ -285,16 +285,23 @@ function processControllerMessage(client, message) {
     return;
   }
 
-  // Also accept a complete stasis snapshot. This makes the server tolerant
-  // of controllers that report several chambers in one WebSocket message.
+  // Accept complete stasis snapshots, including snapshots that also carry
+  // the controller's current player count.
   if (
-    (message.type === "stasis" ||
-      message.type === "stasis-data" ||
-      message.type === "state") &&
-    Array.isArray(message.chambers)
+    message.type === "stasis" ||
+    message.type === "stasis-data" ||
+    message.type === "state"
   ) {
-    for (const chamber of message.chambers) {
-      updateChamberFromController(client, chamber);
+    if (message.playerCount !== undefined) {
+      updatePlayerCount(client, message.playerCount);
+    } else if (Array.isArray(message.players)) {
+      updatePlayerCount(client, message.players.length);
+    }
+
+    if (Array.isArray(message.chambers)) {
+      for (const chamber of message.chambers) {
+        updateChamberFromController(client, chamber);
+      }
     }
   }
 }
@@ -495,7 +502,7 @@ wss.on("connection", (ws, request) => {
   };
 
   clients.add(client);
-  playerCounts.set(controllerName, 0);
+  playerCounts.set(base.id, 0);
   markControllerOnline(base.id, controllerName);
 
   safeSend(ws, {
@@ -529,7 +536,7 @@ wss.on("connection", (ws, request) => {
 
   ws.on("close", () => {
     clients.delete(client);
-    playerCounts.delete(client.controllerName);
+    playerCounts.delete(client.base);
 
     const stillConnected = controllers().some(
       current => current.base === client.base
