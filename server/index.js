@@ -292,7 +292,7 @@ function resetPulledChamber(key) {
           client.reports.set(key, {
             ...report,
             status: "ready",
-            updatedAt: new Date().toISOString()
+            updatedAt: Date.now()
           });
         }
       }
@@ -351,7 +351,11 @@ function updateChamberFromController(client, input) {
     key,
     id: chamber,
     base: client.base,
-    baseName: client.baseName || "Base " + client.base,
+    baseName:
+      (typeof input.baseName === "string" && input.baseName.trim()
+        ? input.baseName.trim()
+        : client.baseName) ||
+      "Base " + client.base,
     label:
       typeof input.label === "string" && input.label.trim()
         ? input.label.trim()
@@ -464,7 +468,14 @@ function processControllerMessage(client, message) {
   }
 
   if (message.type === "status") {
+    setControllerIdentity(client, message);
+
+    if (message.baseName) {
+      client.baseName = String(message.baseName);
+    }
+
     updateChamberFromController(client, message);
+    broadcastSnapshot();
     return;
   }
 
@@ -477,6 +488,7 @@ function processControllerMessage(client, message) {
     chamberList
   ) {
     if (chamberList) {
+      setControllerIdentity(client, message);
       for (const chamber of chamberList) {
         // A chamber entry may carry its own base/controller metadata.
         if (chamber && typeof chamber === "object") {
@@ -524,6 +536,7 @@ function processControllerMessage(client, message) {
     }
 
     clearPullTimer(key);
+    broadcastSnapshot();
   }
 }
 
