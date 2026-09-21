@@ -314,8 +314,153 @@ function normalizeSpeech(text) {
     .replace(/\s+/g, " ");
 }
 
+function editDistance(a, b) {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const dp = Array.from(
+    { length: rows },
+    () => Array(cols).fill(0)
+  );
+
+  for (let i = 0; i < rows; i++) {
+    dp[i][0] = i;
+  }
+
+  for (let j = 0; j < cols; j++) {
+    dp[0][j] = j;
+  }
+
+  for (let i = 1; i < rows; i++) {
+    for (let j = 1; j < cols; j++) {
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : Math.min(
+              dp[i - 1][j] + 1,
+              dp[i][j - 1] + 1,
+              dp[i - 1][j - 1] + 1
+            );
+    }
+  }
+
+  return dp[rows - 1][cols - 1];
+}
+
+function similarWord(word, target, maxDistance) {
+  if (!word || !target) {
+    return false;
+  }
+
+  if (word === target) {
+    return true;
+  }
+
+  if (word.length < target.length - maxDistance) {
+    return false;
+  }
+
+  if (word.length > target.length + maxDistance) {
+    return false;
+  }
+
+  return editDistance(word, target) <= maxDistance;
+}
+
+function matchFarex(words) {
+  for (let i = 0; i < words.length; i++) {
+    if (
+      similarWord(words[i], "farex", 2) ||
+      similarWord(words[i], "ferex", 1) ||
+      similarWord(words[i], "parax", 1)
+    ) {
+      return i;
+    }
+
+    if (i + 1 < words.length) {
+      const joined = words[i] + words[i + 1];
+
+      if (similarWord(joined, "farex", 2)) {
+        return i;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function matchPull(words, startIndex) {
+  for (let i = startIndex; i < words.length; i++) {
+    const word = words[i];
+
+    if (
+      similarWord(word, "pull", 2) ||
+      word.startsWith("pul")
+    ) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+function matchPearl(words, startIndex) {
+  const aliases = [
+    "pearl",
+    "peril",
+    "purl",
+    "barrel"
+  ];
+
+  for (let i = startIndex; i < words.length; i++) {
+    const word = words[i];
+
+    if (
+      aliases.some(alias =>
+        similarWord(word, alias, alias === "barrel" ? 0 : 2)
+      )
+    ) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
 function phraseMatches(text) {
-  return normalizeSpeech(text).includes(VOICE_TRIGGER);
+  const normalized = normalizeSpeech(text);
+  const words = normalized.split(" ").filter(Boolean);
+
+  if (!words.length) {
+    return false;
+  }
+
+  // Exact transcript still wins.
+  if (normalized.includes(VOICE_TRIGGER)) {
+    return true;
+  }
+
+  // Whisper commonly turns "Farex" into "ferex"/"parax" and
+  // "pull" into longer fragments such as "pulmai".
+  const farexIndex = matchFarex(words);
+
+  if (farexIndex < 0) {
+    return false;
+  }
+
+  const pullIndex = matchPull(words, farexIndex + 1);
+
+  if (pullIndex < 0) {
+    return false;
+  }
+
+  const pearlIndex = matchPearl(words, pullIndex + 1);
+
+  if (pearlIndex < 0) {
+    return false;
+  }
+
+  // Keep the command in natural order: Farex -> pull -> pearl.
+  return farexIndex < pullIndex && pullIndex < pearlIndex;
 }
 
 async function pullPlayer(player) {
