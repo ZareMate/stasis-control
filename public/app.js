@@ -139,36 +139,62 @@ function render() {
   if (!state) return;
 
   const allChambers = Array.isArray(state.chambers)
-    ? state.chambers
+    ? state.chambers.filter(Boolean)
     : [];
 
-  const bases = Array.isArray(state.bases)
+  const knownBases = Array.isArray(state.bases)
     ? state.bases
     : [];
 
+  const baseMap = new Map();
+
+  for (const base of knownBases) {
+    if (base == null) continue;
+
+    const id = Number(base.id);
+    if (!Number.isInteger(id)) continue;
+
+    baseMap.set(id, {
+      id,
+      name: base.name || "Base " + id,
+      chambers: []
+    });
+  }
+
+  // Always derive chamber membership from the actual chamber reports.
+  // This avoids depending on base.chambers being populated by an older server.
+  for (const chamber of allChambers) {
+    const baseId = Number(chamber.base);
+
+    if (!Number.isInteger(baseId)) continue;
+
+    if (!baseMap.has(baseId)) {
+      baseMap.set(baseId, {
+        id: baseId,
+        name: chamber.baseName || "Base " + baseId,
+        chambers: []
+      });
+    }
+
+    baseMap.get(baseId).chambers.push(chamber);
+  }
+
+  const bases = [...baseMap.values()].sort(
+    (a, b) => Number(a.id) - Number(b.id)
+  );
+
   $("total").textContent = allChambers.length;
-  $("players").textContent = Number.isInteger(state.playerCount)
-    ? state.playerCount
-    : 0;
+  $("players").textContent =
+    Number.isInteger(state.playerCount)
+      ? state.playerCount
+      : 0;
   $("basesCount").textContent = bases.length;
 
   const root = $("bases");
   root.innerHTML = "";
 
   for (const base of bases) {
-    const baseChamberKeys = Array.isArray(base.chambers)
-      ? base.chambers.map(value =>
-          typeof value === "object" && value
-            ? value.key
-            : String(value)
-        )
-      : allChambers
-          .filter(chamber =>
-            Number(chamber.base) === Number(base.id)
-          )
-          .map(chamber => chamber.key);
-
-    const uniqueKeys = [...new Set(baseChamberKeys)].filter(Boolean);
+    base.chambers.sort((a, b) => Number(a.id) - Number(b.id));
 
     const section = document.createElement("section");
 
@@ -176,10 +202,10 @@ function render() {
       '<div class="base-title">' +
         '<div>' +
           '<span class="eyebrow">STASIS NETWORK</span>' +
-          '<h3>' + esc(base.name || ("Base " + base.id)) + "</h3>" +
+          '<h3>' + esc(base.name) + "</h3>" +
         "</div>" +
         '<span class="base-count">' +
-          uniqueKeys.length +
+          base.chambers.length +
           " CHAMBERS" +
         "</span>" +
       "</div>" +
@@ -187,13 +213,7 @@ function render() {
 
     const grid = section.querySelector(".grid");
 
-    for (const key of uniqueKeys) {
-      const chamber = allChambers.find(
-        item => String(item.key) === String(key)
-      );
-
-      if (!chamber) continue;
-
+    for (const chamber of base.chambers) {
       const card = document.createElement("article");
       card.className = "card " + (chamber.status || "empty");
 
@@ -225,15 +245,16 @@ function render() {
           esc(chamber.player || "No player") +
         "</div>" +
         '<div class="label">' +
-          esc(chamber.label || ("Chamber " + String(chamber.id).padStart(2, "0"))) +
+          esc(
+            chamber.label ||
+            ("Chamber " + String(chamber.id).padStart(2, "0"))
+          ) +
         "</div>" +
         '<button class="pull" ' +
           (canPull ? "" : "disabled") +
         ">PULL PEARL</button>";
 
-      const button = card.querySelector(".pull");
-      button.onclick = () => openPull(chamber);
-
+      card.querySelector(".pull").onclick = () => openPull(chamber);
       grid.appendChild(card);
     }
 
