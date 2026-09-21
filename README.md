@@ -205,10 +205,10 @@ Set up Whisper:
 
 ```bash
 npm install
-sudo apt install ffmpeg\nnpm run stt:setup
+npm run stt:setup
 ```
 
-The setup script clones `whisper.cpp`, builds `whisper-cli`, and downloads the `small.en` model by default. The English-only `small.en` model is substantially larger than `tiny.en` and is intended for higher recognition accuracy; current whisper.cpp documentation lists about 466 MiB on disk and about 852 MB of memory for `small`, versus about 75 MiB and 273 MB for `tiny`. citeturn146732search0turn146732search2 The official whisper.cpp documentation shows the same build flow and its `download-ggml-model.sh` model downloader. citeturn754375search1turn754375search0
+The setup script clones `whisper.cpp`, builds `whisper-cli`, and downloads the `tiny.en` model. The official whisper.cpp documentation shows the same build flow and its `download-ggml-model.sh` model downloader. citeturn754375search1turn754375search0
 
 The bot then listens for:
 
@@ -224,13 +224,10 @@ Change the trigger with:
 VOICE_TRIGGER=Farex pull my pearl
 VOICE_TRIGGER_PLAYER=Farex
 WHISPER_CLI_PATH=./whisper.cpp/build/bin/whisper-cli
-WHISPER_MODEL_PATH=./models/ggml-small.en.bin
+WHISPER_MODEL_PATH=./models/ggml-tiny.en.bin
 WHISPER_THREADS=4
-WHISPER_BEAM_SIZE=10
-WHISPER_BEST_OF=10
-WHISPER_PROMPT=Farex. Pull my pearl. Ender pearl. Stasis chamber. Minecraft.
 ```
 
-The `whisper-cli` tool accepts 16-bit WAV input; the bot decodes Discord's 48 kHz stereo Opus stream and uses FFmpeg to resample it to a standard 16 kHz mono 16-bit PCM WAV before transcription. This follows the whisper.cpp CLI's documented 16-bit WAV input requirement and conversion pattern. The bot also uses beam search/best-of settings and an initial prompt containing the trigger vocabulary; current whisper.cpp CLI documentation exposes `--beam-size`, `--best-of`, and `--prompt`. citeturn788385search0turn146732search4 citeturn754375search1turn754375search3
+The `whisper-cli` tool accepts 16-bit WAV input; the bot converts Discord's decoded PCM stream into a temporary 16-bit, 16 kHz mono WAV file before transcription. citeturn754375search1turn754375search3
 
-`/leave` disconnects the bot and stops voice recognition. Trigger matching is tolerant of common Whisper variations such as splitting `Farex` into multiple words, while still requiring the `pull` and `pearl` parts of the command.
+`/leave` disconnects the bot and stops voice recognition.
