@@ -58,11 +58,12 @@ const WHISPER_MODEL_PATH =
   );
 
 const WHISPER_THREADS = String(
-  process.env.WHISPER_THREADS || "4"
+  process.env.WHISPER_THREADS ||
+    Math.max(4, Math.min(8, os.cpus().length))
 );
 
 const VOICE_TRIGGER = (
-  process.env.VOICE_TRIGGER || "pull"
+  process.env.VOICE_TRIGGER || "home"
 )
   .toLowerCase()
   .replace(/[^a-z0-9]+/g, " ")
@@ -562,6 +563,11 @@ function runWhisper(wavPath) {
       "en",
       "-nt",
       "-np",
+      "-bo",
+      "1",
+      "-bs",
+      "1",
+      "-nf",
       "-t",
       WHISPER_THREADS
     ];
@@ -660,12 +666,17 @@ function startSpeechStream(session, userId) {
   if (session.triggered) return;
   if (session.streams.has(userId)) return;
 
+  const silenceDuration = Math.max(
+    250,
+    Number(process.env.VOICE_SILENCE_MS || 450)
+  );
+
   const opusStream = session.connection.receiver.subscribe(
     userId,
     {
       end: {
         behavior: EndBehaviorType.AfterSilence,
-        duration: 900
+        duration: silenceDuration
       }
     }
   );
@@ -1013,6 +1024,11 @@ client.once("clientReady", async () => {
   );
   console.log(
     "Voice trigger word: " + VOICE_TRIGGER
+  );
+  console.log(
+    "Voice silence: " +
+      Number(process.env.VOICE_SILENCE_MS || 450) +
+      "ms"
   );
   console.log(
     "Voice trigger player: " +
