@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WHISPER_DIR="$ROOT/whisper.cpp"
 MODEL_DIR="$ROOT/models"
+MODEL_NAME="${WHISPER_MODEL_NAME:-small.en}"
 
 if ! command -v git >/dev/null 2>&1; then
   echo "git is required"
@@ -30,12 +31,12 @@ cmake --build "$WHISPER_DIR/build" -j --config Release --target whisper-cli
 
 mkdir -p "$MODEL_DIR"
 
-if [ ! -f "$MODEL_DIR/ggml-tiny.en.bin" ]; then
-  echo "Downloading Whisper tiny.en model..."
-  bash "$WHISPER_DIR/models/download-ggml-model.sh" tiny.en
-  cp "$WHISPER_DIR/models/ggml-tiny.en.bin" "$MODEL_DIR/ggml-tiny.en.bin"
+if [ ! -f "$MODEL_DIR/ggml-${MODEL_NAME}.bin" ]; then
+  echo "Downloading Whisper ${MODEL_NAME} model..."
+  bash "$WHISPER_DIR/models/download-ggml-model.sh" "$MODEL_NAME"
+  cp "$WHISPER_DIR/models/ggml-${MODEL_NAME}.bin" "$MODEL_DIR/ggml-${MODEL_NAME}.bin"
 fi
 
 echo "Whisper STT ready."
 echo "Binary: $WHISPER_DIR/build/bin/whisper-cli"
-echo "Model:  $MODEL_DIR/ggml-tiny.en.bin"
+echo "Model:  $MODEL_DIR/ggml-${MODEL_NAME}.bin"
