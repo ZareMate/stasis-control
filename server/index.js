@@ -19,6 +19,13 @@ const pullTimers = new Map();
 const CONTROLLER_TOKEN = process.env.STASIS_TOKEN;
 const PORT = Number(process.env.PORT || 3000);
 const WS_PATH = "/ws";
+const DEBUG = String(process.env.STASIS_DEBUG || "true").toLowerCase() === "true";
+
+function debugLog(...args) {
+  if (DEBUG) {
+    console.log("[DEBUG]", ...args);
+  }
+}
 
 const DATA_DIR = process.env.STASIS_DATA_DIR || path.join(ROOT, "data");
 const PREFERENCES_FILE = path.join(DATA_DIR, "player-preferences.json");
@@ -384,6 +391,20 @@ function collectReports() {
     }
   }
 
+  if (DEBUG) {
+    debugLog(
+      "collectReports:",
+      [...reports.values()].map(report => ({
+        key: report.key,
+        base: report.base,
+        chamber: report.id,
+        player: report.player,
+        status: report.status,
+        controller: report.sourceControllerName
+      }))
+    );
+  }
+
   return reports;
 }
 
@@ -473,7 +494,7 @@ function snapshot() {
       reportedAt: report.updatedAt
     }));
 
-  return {
+  const result = {
     bases: baseList,
     chambers,
     logs,
@@ -488,6 +509,24 @@ function snapshot() {
       lastHeartbeat: client.lastHeartbeat || null
     }))
   };
+
+  if (DEBUG) {
+    debugLog("snapshot:", JSON.stringify({
+      bases: result.bases,
+      chambers: result.chambers.map(chamber => ({
+        key: chamber.key,
+        base: chamber.base,
+        id: chamber.id,
+        player: chamber.player,
+        status: chamber.status,
+        controller: chamber.controller
+      })),
+      controllers: result.controllers,
+      playerCount: result.playerCount
+    }));
+  }
+
+  return result;
 }
 
 function broadcastSnapshot() {
@@ -602,6 +641,18 @@ function updateChamberFromController(client, input) {
   };
 
   client.reports.set(key, report);
+
+  debugLog(
+    "chamber report received:",
+    JSON.stringify({
+      controller: client.controllerName,
+      base: client.base,
+      chamber,
+      player,
+      status,
+      key
+    })
+  );
 
   if (status === "ready") {
     clearPullTimer(key);
@@ -992,6 +1043,8 @@ server.on("upgrade", (request, socket, head) => {
 wss.on("connection", (ws, request) => {
   const url = new URL(request.url, "http://localhost");
 
+  debugLog("WebSocket connection:", url.pathname, url.search);
+
   const role = url.searchParams.get("role");
   const token = url.searchParams.get("token");
   const queryBase = url.searchParams.get("base");
@@ -1065,6 +1118,24 @@ wss.on("connection", (ws, request) => {
         error: "Invalid JSON"
       });
       return;
+    }
+
+    if (DEBUG && message.type !== "heartbeat") {
+      debugLog(
+        "controller message:",
+        JSON.stringify({
+          controller: client.controllerName,
+          base: client.base,
+          type: message.type,
+          chamber: message.chamber,
+          player: message.player,
+          status: message.status,
+          baseName: message.baseName,
+          chambers: Array.isArray(message.chambers)
+            ? message.chambers.length
+            : undefined
+        })
+      );
     }
 
     processControllerMessage(client, message);
