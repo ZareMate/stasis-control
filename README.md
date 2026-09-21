@@ -150,3 +150,22 @@ Do not commit the real controller token.
 Set `STASIS_TOKEN` on the server and use the same value in ComputerCraft. The browser does not receive the controller token.
 
 For public deployment, put the dashboard behind HTTPS and an authentication layer before exposing pull controls.
+
+
+## Controller-reported player count
+
+The dashboard player count comes from ComputerCraft controller reports, not from the static chamber configuration.
+
+Controllers can send:
+
+```json
+{"type":"player-count","playerCount":7}
+```
+
+or:
+
+```json
+{"type":"players","players":["PlayerOne","PlayerTwo"]}
+```
+
+The server aggregates the latest count from each connected base controller. When a controller disconnects, its reported count is removed automatically.
