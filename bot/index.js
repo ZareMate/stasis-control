@@ -525,14 +525,13 @@ function runWhisper(wavPath) {
     ];
 
     console.log(
-      "[STT] Whisper audio decoder: FFmpeg (miniaudio disabled)"
+      "[STT] Whisper audio decoder: miniaudio first, FFmpeg fallback"
     );
 
     const child = spawn(WHISPER_CLI_PATH, args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
-        ...process.env,
-        WHISPER_COMMON_MINIAUDIO_SKIP: "1"
+        ...process.env
       }
     });
 
