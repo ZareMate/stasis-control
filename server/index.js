@@ -32,9 +32,10 @@ if (!CONTROLLER_TOKEN) {
 
 for (const chamber of config.chambers) {
   statuses.set(chamber.id, {
-    status: chamber.player ? "ready" : "empty",
-    player: chamber.player || "",
-    controller: null
+    status: "empty",
+    player: "",
+    controller: null,
+    reported: false
   });
 }
 
@@ -66,9 +67,21 @@ function browserCount() {
 }
 
 function reportedPlayerCount() {
-  return [...playerCounts.values()].reduce((total, count) => total + count, 0);
-}
+  return config.bases.reduce((total, base) => {
+    return total + config.chambers.filter(chamber => {
+      if (!base.chambers.includes(chamber.id)) return false;
 
+      const current = statuses.get(chamber.id);
+      if (!current || !current.reported) return false;
+
+      return (
+        typeof current.player === "string" &&
+        current.player.trim() !== "" &&
+        ["ready", "pulling", "pulled"].includes(current.status)
+      );
+    }).length;
+  }, 0);
+}
 function addLog(type, chamber, player, detail) {
   const entry = {
     time: new Date().toISOString(),
@@ -110,6 +123,18 @@ function controllerForChamber(chamberId) {
   const base = baseByChamber(chamberId);
   if (!base) return null;
 
+  const current = statuses.get(chamberId);
+
+  if (current?.controller) {
+    const owner = controllers().find(
+      client =>
+        client.base === base.id &&
+        client.controllerName === current.controller
+    );
+
+    if (owner) return owner;
+  }
+
   return controllers().find(client => client.base === base.id) || null;
 }
 
@@ -127,8 +152,7 @@ function snapshot() {
     controllerDetails: controllers().map(client => ({
       name: client.controllerName,
       base: client.base,
-      connectedAt: client.connectedAt,
-      playerCount: playerCounts.get(client.base) ?? null
+      connectedAt: client.connectedAt
     }))
   };
 }
@@ -169,15 +193,16 @@ function markControllerOnline(baseId, controllerName) {
     const base = baseByChamber(chamber.id);
     if (!base || base.id !== baseId) continue;
 
-    const current = statuses.get(chamber.id) || {};
+    const current = statuses.get(chamber.id);
+    if (!current) continue;
+
+    // Preserve the most recent chamber report. The reporting controller
+    // identifies which controller owns that chamber.
     statuses.set(chamber.id, {
-      player: current.player || chamber.player || "",
-      status: "offline",
-      controller: controllerName
+      ...current
     });
   }
 }
-
 function updateChamberFromController(client, input) {
   let chamberId = Number.isInteger(Number(input.chamber))
     ? Number(input.chamber)
@@ -221,7 +246,8 @@ function updateChamberFromController(client, input) {
     status: ["empty", "ready", "pulling", "pulled"].includes(nextStatus)
       ? nextStatus
       : current.status || "empty",
-    controller: client.controllerName
+    controller: client.controllerName,
+    reported: true
   };
 
   statuses.set(chamber.id, next);
@@ -243,61 +269,17 @@ function updateChamberFromController(client, input) {
   }
 }
 
-function updatePlayerCount(client, value) {
-  const count = Number(value);
-
-  if (!Number.isInteger(count) || count < 0) {
-    console.warn(
-      "[WS] Ignoring invalid player count from " +
-      client.controllerName +
-      ": " +
-      value
-    );
-    return;
-  }
-
-  playerCounts.set(client.controllerName, count);
-
-  broadcast({
-    type: "player-count",
-    playerCount: reportedPlayerCount()
-  });
-}
-
 function processControllerMessage(client, message) {
-  if (
-    message.type === "player-count" ||
-    message.type === "playerCount" ||
-    message.type === "players"
-  ) {
-    if (Array.isArray(message.players)) {
-      updatePlayerCount(client, message.players.length);
-    } else if (message.playerCount !== undefined) {
-      updatePlayerCount(client, message.playerCount);
-    } else if (message.count !== undefined) {
-      updatePlayerCount(client, message.count);
-    }
-    return;
-  }
-
   if (message.type === "status") {
     updateChamberFromController(client, message);
     return;
   }
 
-  // Accept complete stasis snapshots, including snapshots that also carry
-  // the controller's current player count.
   if (
     message.type === "stasis" ||
     message.type === "stasis-data" ||
     message.type === "state"
   ) {
-    if (message.playerCount !== undefined) {
-      updatePlayerCount(client, message.playerCount);
-    } else if (Array.isArray(message.players)) {
-      updatePlayerCount(client, message.players.length);
-    }
-
     if (Array.isArray(message.chambers)) {
       for (const chamber of message.chambers) {
         updateChamberFromController(client, chamber);
@@ -305,7 +287,6 @@ function processControllerMessage(client, message) {
     }
   }
 }
-
 app.get("/api/state", (_req, res) => {
   res.json(snapshot());
 });
@@ -485,14 +466,6 @@ wss.on("connection", (ws, request) => {
     return;
   }
 
-  // Only one active controller should own a base.
-  for (const existing of controllers()) {
-    if (existing.base !== base.id) continue;
-    existing.ws.close(1000, "Replaced by a newer controller connection");
-    clients.delete(existing);
-    markControllerOffline(base.id);
-  }
-
   const client = {
     ws,
     role: "controller",
@@ -502,7 +475,6 @@ wss.on("connection", (ws, request) => {
   };
 
   clients.add(client);
-  playerCounts.set(base.id, 0);
   markControllerOnline(base.id, controllerName);
 
   safeSend(ws, {
@@ -536,7 +508,6 @@ wss.on("connection", (ws, request) => {
 
   ws.on("close", () => {
     clients.delete(client);
-    playerCounts.delete(client.base);
 
     const stillConnected = controllers().some(
       current => current.base === client.base
@@ -551,16 +522,13 @@ wss.on("connection", (ws, request) => {
         client.controllerName + " disconnected from " + base.name
       );
       broadcastSnapshot();
-      broadcast({
-        type: "player-count",
-        playerCount: reportedPlayerCount()
-      });
     } else {
       broadcast({
         type: "connections",
         controllers: controllerCount(),
         browsers: browserCount()
       });
+      broadcastSnapshot();
     }
   });
 
