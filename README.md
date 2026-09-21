@@ -273,3 +273,30 @@ pull <base> <player>
 ```
 
 Set `SERVER_URL` and `STASIS_TOKEN` at the top of the program before using it.
+
+## ComputerCraft chamber API
+
+Computers can also read the currently reported chambers with:
+
+```text
+GET /api/computer/chambers
+```
+
+The request uses the ComputerCraft `STASIS_TOKEN` in `X-Stasis-Token`.
+
+Optional filters:
+
+```text
+/api/computer/chambers?base=1
+/api/computer/chambers?player=PlayerName
+```
+
+For a player request without a base, the configured default base is preferred when one exists. The response contains the chamber number, base, player, status, label, controller, and default-base information.
+
+The included `computercraft/pull.lua` utility can query chambers with:
+
+```text
+chambers
+chambers <base>
+chambers player <player>
+```
