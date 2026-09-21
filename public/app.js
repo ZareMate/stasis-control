@@ -11,8 +11,21 @@ async function load() {
   try {
     const response = await fetch("/api/state", { cache: "no-store" });
     state = await response.json();
+
+    console.group("[Stasis Debug] Initial state");
+    console.log("State:", state);
+    console.log("Bases:", state?.bases);
+    console.log("Chambers:", state?.chambers);
+    console.log("Counts:", {
+      bases: Array.isArray(state?.bases) ? state.bases.length : 0,
+      chambers: Array.isArray(state?.chambers) ? state.chambers.length : 0,
+      players: state?.playerCount
+    });
+    console.groupEnd();
+
     render();
-  } catch {
+  } catch (error) {
+    console.error("[Stasis Debug] Initial state request failed:", error);
     showToast("Unable to load dashboard state.");
   }
 }
@@ -26,11 +39,16 @@ function connect() {
   );
 
   socket.onopen = () => {
+    console.log("[Stasis Debug] Browser WebSocket connected");
     $("dot").classList.remove("offline");
     $("connectionText").textContent = "Connected";
   };
 
-  socket.onclose = () => {
+  socket.onclose = event => {
+    console.warn("[Stasis Debug] Browser WebSocket closed:", {
+      code: event.code,
+      reason: event.reason
+    });
     $("dot").classList.add("offline");
     $("connectionText").textContent = "Disconnected";
     timer = setTimeout(connect, 2500);
@@ -47,11 +65,25 @@ function connect() {
 
     if (message.type === "state") {
       state = message.state;
+
+      console.group("[Stasis Debug] State WebSocket message");
+      console.log("State:", state);
+      console.log("Bases:", state?.bases);
+      console.log("Chambers:", state?.chambers);
+      console.log("Counts:", {
+        bases: Array.isArray(state?.bases) ? state.bases.length : 0,
+        chambers: Array.isArray(state?.chambers) ? state.chambers.length : 0,
+        players: state?.playerCount
+      });
+      console.groupEnd();
+
       render();
       return;
     }
 
     if (message.type === "chamber") {
+      console.log("[Stasis Debug] Chamber event:", message);
+
       if (!state) return;
 
       if (!Array.isArray(state.chambers)) {
@@ -182,6 +214,26 @@ function render() {
   const bases = [...baseMap.values()].sort(
     (a, b) => Number(a.id) - Number(b.id)
   );
+
+  console.group("[Stasis Debug] Render");
+  console.log("Raw state.bases:", knownBases);
+  console.log("Raw state.chambers:", allChambers);
+  console.log("Derived bases:", bases);
+  console.log(
+    "Chambers grouped by base:",
+    bases.map(base => ({
+      id: base.id,
+      name: base.name,
+      chamberCount: base.chambers.length,
+      chambers: base.chambers.map(chamber => ({
+        id: chamber.id,
+        key: chamber.key,
+        player: chamber.player,
+        status: chamber.status
+      }))
+    }))
+  );
+  console.groupEnd();
 
   $("total").textContent = allChambers.length;
   $("players").textContent =
