@@ -11,6 +11,19 @@ local BASE_ID = 1
 
 local PULSE_TIME = 0.20
 
+-- Report the number of players known by this controller.
+-- If your controller has a separate live player-count source, replace
+-- this function with that value.
+local function getPlayerCount()
+    local count = 0
+    for _, entry in ipairs(RELAYS) do
+        if entry.player and entry.player ~= "" then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 -- Base 1 chamber layout:
 --
 -- LEFT                                      RIGHT
@@ -192,6 +205,11 @@ local function handlePull(ws, command)
 end
 
 local function announceConfiguredPlayers(ws)
+    sendMessage(ws, {
+        type = "player-count",
+        playerCount = getPlayerCount()
+    })
+
     for _, entry in ipairs(RELAYS) do
         local relay = getRelayPeripheral(entry.relay)
 
