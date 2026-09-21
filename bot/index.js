@@ -62,7 +62,9 @@ async function registerCommands() {
 }
 
 async function getState() {
-  const response = await fetch(STASIS_API_URL + "/api/state");
+  const response = await fetch(STASIS_API_URL + "/api/state", {
+    signal: AbortSignal.timeout(2500)
+  });
 
   if (!response.ok) {
     throw new Error("Stasis API returned HTTP " + response.status);
@@ -87,25 +89,55 @@ function uniquePlayers(state) {
   return [...seen.values()].sort((a, b) => a.localeCompare(b));
 }
 
+let cachedPlayers = [];
+let refreshingPlayers = false;
+
+async function refreshPlayers() {
+  if (refreshingPlayers) return;
+
+  refreshingPlayers = true;
+
+  try {
+    const state = await getState();
+    cachedPlayers = uniquePlayers(state);
+  } catch (error) {
+    console.error("[Discord] player cache refresh failed:", error.message);
+  } finally {
+    refreshingPlayers = false;
+  }
+}
+
+async function safeAutocompleteRespond(interaction, choices) {
+  try {
+    await interaction.respond(choices);
+  } catch (error) {
+    if (error?.code === 10062) {
+      return;
+    }
+
+    console.error("[Discord] autocomplete response failed:", error);
+  }
+}
+
 client.on("interactionCreate", async interaction => {
   if (interaction.isAutocomplete()) {
-    try {
-      const state = await getState();
-      const players = uniquePlayers(state);
-      const query = interaction.options.getString("player")?.toLowerCase() || "";
+    const query =
+      interaction.options.getString("player")?.toLowerCase() || "";
 
-      await interaction.respond(
-        players
-          .filter(player => player.toLowerCase().includes(query))
-          .slice(0, 25)
-          .map(player => ({
-            name: player,
-            value: player
-          }))
-      );
-    } catch {
-      await interaction.respond([]);
-    }
+    const choices = cachedPlayers
+      .filter(player => player.toLowerCase().includes(query))
+      .slice(0, 25)
+      .map(player => ({
+        name: player,
+        value: player
+      }));
+
+    // Discord autocomplete interactions expire quickly. Never wait for the
+    // Stasis API before acknowledging the interaction.
+    await safeAutocompleteRespond(interaction, choices);
+
+    // Refresh asynchronously for the next autocomplete request.
+    refreshPlayers();
 
     return;
   }
@@ -163,8 +195,14 @@ client.on("interactionCreate", async interaction => {
   }
 });
 
-client.once("ready", () => {
+client.once("clientReady", async () => {
   console.log("Discord bot logged in as " + client.user.tag);
+
+  await refreshPlayers();
+
+  setInterval(() => {
+    refreshPlayers();
+  }, 10000);
 });
 
 (async () => {
