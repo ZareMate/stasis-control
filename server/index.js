@@ -1086,6 +1086,87 @@ app.post("/api/computer/pull", (req, res) => {
   return handlePlayerPullRequest(req, res, false);
 });
 
+function computerChamberList(req, res) {
+  if (!authorizedComputerRequest(req)) {
+    return res.status(401).json({
+      error: "Unauthorized"
+    });
+  }
+
+  const requestedBase =
+    req.query?.base === undefined || req.query?.base === null || req.query.base === ""
+      ? null
+      : Number(req.query.base);
+
+  const player = String(req.query?.player || "").trim();
+
+  if (
+    requestedBase !== null &&
+    (!Number.isInteger(requestedBase) || requestedBase < 0)
+  ) {
+    return res.status(400).json({
+      error: "base must be a non-negative integer"
+    });
+  }
+
+  let chambers = [...collectReports().values()];
+
+  if (requestedBase !== null) {
+    chambers = chambers.filter(
+      report => Number(report.base) === requestedBase
+    );
+  }
+
+  if (player) {
+    chambers = chambers.filter(
+      report => playerKey(report.player) === playerKey(player)
+    );
+
+    // When asking for one player without an explicit base, prefer the
+    // configured default base when it exists.
+    if (requestedBase === null) {
+      const preferred = defaultBaseForPlayer(player);
+
+      if (preferred !== null) {
+        const preferredMatches = chambers.filter(
+          report => Number(report.base) === preferred
+        );
+
+        if (preferredMatches.length) {
+          chambers = preferredMatches;
+        }
+      }
+    }
+  }
+
+  chambers.sort((a, b) => {
+    if (Number(a.base) !== Number(b.base)) {
+      return Number(a.base) - Number(b.base);
+    }
+
+    return Number(a.id) - Number(b.id);
+  });
+
+  return res.json({
+    chambers: chambers.map(report => ({
+      key: report.key,
+      chamber: report.id,
+      base: report.base,
+      baseName: report.baseName,
+      label: report.label,
+      player: report.player,
+      status: report.status,
+      controller: report.sourceControllerName,
+      reportedAt: report.updatedAt,
+      ...chamberPreference(report)
+    })),
+    count: chambers.length
+  });
+}
+
+app.get("/api/computer/chambers", computerChamberList);
+
+
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url, "http://localhost");
 
