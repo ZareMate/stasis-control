@@ -20,13 +20,13 @@ local PULSE_TIME = 0.20
 -- Relay 0 is the chamber on the far right.
 
 local RELAYS = {
-    { chamber = 1, player = "Piotrusek69", relay = "redstone_relay_0" },
-    { chamber = 2, player = "Shark107", relay = "redstone_relay_1" },
-    { chamber = 3, player = "ZareMate", relay = "redstone_relay_2" },
-    { chamber = 4, player = "4e6qr", relay = "redstone_relay_3" },
-    { chamber = 5, player = "GRI_9", relay = "redstone_relay_4" },
-    { chamber = 6, player = "Armadillo122", relay = "redstone_relay_5" },
-    { chamber = 7, player = "Fobablo", relay = "redstone_relay_6" },
+    { chamber = 1, player = "Piotrusek69", label = "Chamber 01", relay = "redstone_relay_0" },
+    { chamber = 2, player = "Shark107", label = "Chamber 02", relay = "redstone_relay_1" },
+    { chamber = 3, player = "ZareMate", label = "Chamber 03", relay = "redstone_relay_2" },
+    { chamber = 4, player = "4e6qr", label = "Chamber 04", relay = "redstone_relay_3" },
+    { chamber = 5, player = "GRI_9", label = "Chamber 05", relay = "redstone_relay_4" },
+    { chamber = 6, player = "Armadillo122", label = "Chamber 06", relay = "redstone_relay_5" },
+    { chamber = 7, player = "Fobablo", label = "Chamber 07", relay = "redstone_relay_6" },
 }
 
 local function encode(value)
@@ -73,10 +73,13 @@ local function sendMessage(ws, message)
     return true
 end
 
-local function sendStatus(ws, chamber, player, status)
+local function sendStatus(ws, chamber, player, status, label)
     return sendMessage(ws, {
         type = "status",
+        base = BASE_ID,
+        baseName = "Base " .. tostring(BASE_ID),
         chamber = chamber,
+        label = label or ("Chamber " .. string.format("%02d", chamber)),
         player = player or "",
         status = status
     })
@@ -140,7 +143,7 @@ local function handlePull(ws, command)
             ")"
         )
 
-        sendStatus(ws, chamber, player, "ready")
+        sendStatus(ws, chamber, player, "ready", entry and entry.label or nil)
 
         sendMessage(ws, {
             type = "pull-result",
@@ -159,12 +162,12 @@ local function handlePull(ws, command)
     print("  Chamber: " .. chamber)
     print("  Relay:   " .. entry.relay)
 
-    sendStatus(ws, chamber, player, "pulling")
+    sendStatus(ws, chamber, player, "pulling", entry.label)
 
     local success, pulseError = pulseRelay(entry.relay)
 
     if success then
-        sendStatus(ws, chamber, player, "pulled")
+        sendStatus(ws, chamber, player, "pulled", entry.label)
 
         sendMessage(ws, {
             type = "pull-result",
@@ -176,7 +179,7 @@ local function handlePull(ws, command)
 
         print("  Result:  pulled")
     else
-        sendStatus(ws, chamber, player, "ready")
+        sendStatus(ws, chamber, player, "ready", entry.label)
 
         sendMessage(ws, {
             type = "pull-result",
@@ -207,7 +210,8 @@ local function announceConfiguredPlayers(ws)
                 ws,
                 entry.chamber,
                 entry.player,
-                "ready"
+                "ready",
+                entry.label
             )
         else
             print(
@@ -221,7 +225,8 @@ local function announceConfiguredPlayers(ws)
                 ws,
                 entry.chamber,
                 entry.player,
-                "empty"
+                "empty",
+                entry.label
             )
         end
     end
