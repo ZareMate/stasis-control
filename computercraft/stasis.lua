@@ -18,7 +18,7 @@ local PULLED_DISPLAY_TIME = 5
 local MONITOR = peripheral.find("monitor")
 local RADAR = peripheral.wrap("top")
 local RADAR_ENTITY = "entity.minecraft.ender_pearl"
-local RADAR_POSITION_TOLERANCE = 1
+local RADAR_POSITION_TOLERANCE = 0.05
 
 local RELAYS = {
     { chamber = 1, player = "Piotrusek69", relay = "redstone_relay_20" },
@@ -36,20 +36,19 @@ local RELAYS = {
 }
 
 local CHAMBER_POSITIONS = {
-    [1] = { x = -96, y = 30, z = 268 },
-    [2] = { x = -94, y = 30, z = 267 },
-    [3] = { x = -92, y = 30, z = 266 },
-    [4] = { x = -90, y = 30, z = 265 },
-    [5] = { x = -88, y = 30, z = 264 },
-    -- Confirmed from Create Radar: pearl detected at -85.54, 30.02, 258.61
-    [6] = { x = -85.54, y = 30.02, z = 258.61 },
-    [7] = { x = -84, y = 30, z = 262 },
-    [8] = { x = -82, y = 30, z = 261 },
-    [9] = { x = -80, y = 30, z = 260 },
-    -- Confirmed from Create Radar: pearl detected at -77.59, 30.01, 258.35
-    [10] = { x = -77.59, y = 30.01, z = 258.35 },
-    [11] = { x = -76, y = 30, z = 258 },
-    [12] = { x = -74, y = 30, z = 258 }
+    [1] = { xMin = -97, xMax = -96, yMin = 29, yMax = 31, zMin = 267, zMax = 268 },
+    [2] = { xMin = -95, xMax = -94, yMin = 29, yMax = 31, zMin = 267, zMax = 268 },
+    [3] = { xMin = -93, xMax = -92, yMin = 29, yMax = 31, zMin = 266, zMax = 267 },
+    [4] = { xMin = -91, xMax = -90, yMin = 29, yMax = 31, zMin = 265, zMax = 266 },
+    [5] = { xMin = -89, xMax = -88, yMin = 29, yMax = 31, zMin = 264, zMax = 265 },
+    [6] = { xMin = -86, xMax = -85, yMin = 29, yMax = 31, zMin = 258, zMax = 259 },
+    [7] = { xMin = -85, xMax = -84, yMin = 29, yMax = 31, zMin = 258, zMax = 259 },
+    [8] = { xMin = -83, xMax = -82, yMin = 29, yMax = 31, zMin = 258, zMax = 259 },
+    [9] = { xMin = -81, xMax = -80, yMin = 29, yMax = 31, zMin = 258, zMax = 259 },
+    [10] = { xMin = -78, xMax = -77, yMin = 29, yMax = 31, zMin = 258, zMax = 259 },
+    [11] = { xMin = -77, xMax = -76, yMin = 29, yMax = 31, zMin = 258, zMax = 259 },
+    [12] = { xMin = -75, xMax = -74, yMin = 29, yMax = 31, zMin = 258, zMax = 259 }
+}
 }
 
 local chambers = {}
@@ -293,16 +292,33 @@ local function debugRadarPearls(tracks)
         local p = track and track.position
 
         if p then
+            local x = tonumber(p.x) or 0
+            local y = tonumber(p.y) or 0
+            local z = tonumber(p.z) or 0
+            local matches = {}
+
+            if entityType == RADAR_ENTITY then
+                for chamber, bounds in pairs(CHAMBER_POSITIONS) do
+                    local tolerance = RADAR_POSITION_TOLERANCE
+
+                    if x >= bounds.xMin - tolerance and
+                       x <= bounds.xMax + tolerance and
+                       y >= bounds.yMin - tolerance and
+                       y <= bounds.yMax + tolerance and
+                       z >= bounds.zMin - tolerance and
+                       z <= bounds.zMax + tolerance then
+                        table.insert(matches, tostring(chamber))
+                    end
+                end
+            end
+
             print(
                 "  ID " .. tostring(id) ..
                 " | " .. tostring(entityType) ..
                 " @ " ..
-                string.format(
-                    "%.2f %.2f %.2f",
-                    tonumber(p.x) or 0,
-                    tonumber(p.y) or 0,
-                    tonumber(p.z) or 0
-                )
+                string.format("%.2f %.2f %.2f", x, y, z) ..
+                " -> chamber " ..
+                (#matches > 0 and table.concat(matches, ",") or "NONE")
             )
         else
             print(
@@ -318,11 +334,13 @@ end
 
 
 local function pearlDetectedAt(chamber, tracks)
-    local position = CHAMBER_POSITIONS[chamber]
+    local bounds = CHAMBER_POSITIONS[chamber]
 
-    if not position then
+    if not bounds then
         return false
     end
+
+    local tolerance = RADAR_POSITION_TOLERANCE
 
     for _, track in pairs(tracks) do
         if track and track.entityType == RADAR_ENTITY then
@@ -332,13 +350,17 @@ local function pearlDetectedAt(chamber, tracks)
                p.x ~= nil and
                p.y ~= nil and
                p.z ~= nil then
-                local dx = math.abs(tonumber(p.x) - position.x)
-                local dy = math.abs(tonumber(p.y) - position.y)
-                local dz = math.abs(tonumber(p.z) - position.z)
+                local x = tonumber(p.x)
+                local y = tonumber(p.y)
+                local z = tonumber(p.z)
 
-                if dx <= RADAR_POSITION_TOLERANCE and
-                   dy <= RADAR_POSITION_TOLERANCE and
-                   dz <= RADAR_POSITION_TOLERANCE then
+                if x and y and z and
+                   x >= bounds.xMin - tolerance and
+                   x <= bounds.xMax + tolerance and
+                   y >= bounds.yMin - tolerance and
+                   y <= bounds.yMax + tolerance and
+                   z >= bounds.zMin - tolerance and
+                   z <= bounds.zMax + tolerance then
                     return true
                 end
             end
