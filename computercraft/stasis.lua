@@ -14,11 +14,12 @@ local HEARTBEAT_INTERVAL = 10
 local HEARTBEAT_TIMEOUT = 5
 local DISPLAY_REFRESH = 1
 local PULLED_DISPLAY_TIME = 5
+local RADAR_BLOCK_EPSILON = 0.001
 
 local MONITOR = peripheral.find("monitor")
 local RADAR = peripheral.wrap("top")
 local RADAR_ENTITY = "entity.minecraft.ender_pearl"
-local RADAR_BLOCK_EPSILON = 0.001
+local RADAR_POSITION_TOLERANCE = 0.05
 
 local RELAYS = {
     { chamber = 1, player = "Piotrusek69", relay = "redstone_relay_20" },
@@ -36,16 +37,11 @@ local RELAYS = {
 }
 
 local CHAMBER_POSITIONS = {
-    [1] = { x = -96, y = 30, z = 268 },
-    [2] = { x = -94, y = 30, z = 267 },
-
-    -- Confirmed from Create Radar data:
+    [1] = { x = -96, y = 30, z = 258 },
+    [2] = { x = -94, y = 30, z = 258 },
     [3] = { x = -92, y = 30, z = 258 },
-
-    [4] = { x = -90, y = 30, z = 265 },
-    [5] = { x = -88, y = 30, z = 264 },
-
-    -- Confirmed from Create Radar data:
+    [4] = { x = -90, y = 30, z = 258 },
+    [5] = { x = -88, y = 30, z = 258 },
     [6] = { x = -86, y = 30, z = 258 },
     [7] = { x = -84, y = 30, z = 258 },
     [8] = { x = -82, y = 30, z = 258 },
@@ -53,7 +49,6 @@ local CHAMBER_POSITIONS = {
     [10] = { x = -78, y = 30, z = 258 },
     [11] = { x = -76, y = 30, z = 258 },
     [12] = { x = -74, y = 30, z = 258 }
-}
 }
 
 local chambers = {}
