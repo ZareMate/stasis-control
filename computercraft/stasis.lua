@@ -279,6 +279,56 @@ local function getPearlTracks()
     return tracks
 end
 
+local function debugRadarPearls(tracks)
+    local found = 0
+
+    print("[RADAR] Ender pearls:")
+
+    for id, track in pairs(tracks or {}) do
+        if track and track.entityType == RADAR_ENTITY then
+            found = found + 1
+
+            local p = track.position
+
+            if p then
+                local x = tonumber(p.x) or 0
+                local y = tonumber(p.y) or 0
+                local z = tonumber(p.z) or 0
+
+                local matches = {}
+
+                for chamber, position in pairs(CHAMBER_POSITIONS) do
+                    local dx = math.abs(x - position.x)
+                    local dy = math.abs(y - position.y)
+                    local dz = math.abs(z - position.z)
+
+                    if dx <= RADAR_POSITION_TOLERANCE and
+                       dy <= RADAR_POSITION_TOLERANCE and
+                       dz <= RADAR_POSITION_TOLERANCE then
+                        table.insert(matches, tostring(chamber))
+                    end
+                end
+
+                print(
+                    "  ID " .. tostring(id) ..
+                    " @ " ..
+                    string.format("%.2f %.2f %.2f", x, y, z) ..
+                    " -> chamber " ..
+                    (#matches > 0 and table.concat(matches, ",") or "NONE")
+                )
+            else
+                print("  ID " .. tostring(id) .. " has no position")
+            end
+        end
+    end
+
+    if found == 0 then
+        print("  NONE")
+    else
+        print("  Total: " .. tostring(found))
+    end
+end
+
 local function pearlDetectedAt(chamber, tracks)
     local position = CHAMBER_POSITIONS[chamber]
 
@@ -785,6 +835,14 @@ while true do
                                 end
                             end
                         end
+                    end
+
+                    local radarTracks, radarError = getPearlTracks()
+
+                    if radarTracks then
+                        debugRadarPearls(radarTracks)
+                    else
+                        print("[RADAR] ERROR: " .. tostring(radarError))
                     end
 
                     syncAllChambersWithRadar(ws)
