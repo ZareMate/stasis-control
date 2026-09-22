@@ -17,7 +17,7 @@ local PULLED_DISPLAY_TIME = 5
 
 local MONITOR = peripheral.find("monitor")
 local RADAR = peripheral.wrap("top")
-local RADAR_ENTITY = "minecraft:ender_pearl"
+local RADAR_ENTITY = "entity.minecraft.ender_pearl"
 local RADAR_POSITION_TOLERANCE = 1
 
 local RELAYS = {
