@@ -707,6 +707,16 @@ while true do
 
         drawMonitor()
         announceConfiguredPlayers(ws)
+
+        local startupTracks, startupRadarError = getPearlTracks()
+
+        if startupTracks then
+            print("[RADAR] Initial scan")
+            debugRadarPearls(startupTracks)
+        else
+            print("[RADAR] Initial scan failed: " .. tostring(startupRadarError))
+        end
+
         syncAllChambersWithRadar(ws)
         sendHeartbeat(ws)
 
