@@ -26,7 +26,10 @@ local RELAYS = {
     { chamber = 6, player = "Armadillo122", relay = "redstone_relay_25" },
     { chamber = 7, player = "FcFabio", relay = "redstone_relay_26" },
     { chamber = 8, player = "M1stak3en", relay = "redstone_relay_27" },
-    { chamber = 9, player = "EnderiumEnd", relay = "redstone_relay_28" }
+    { chamber = 9, player = "EnderiumEnd", relay = "redstone_relay_28" },
+    { chamber = 10, player = "Remoteless", relay = "redstone_relay_29" },
+    { chamber = 11, player = "netramen7", relay = "redstone_relay_30" },
+    { chamber = 12, player = "gardja", relay = "redstone_relay_31" }
 }
 
 local chambers = {}
