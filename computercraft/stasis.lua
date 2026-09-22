@@ -52,6 +52,9 @@ local CHAMBER_POSITIONS = {
 
 local chambers = {}
 local wsConnected = false
+
+local setChamberStatus
+local sendStatus
 local heartbeatPending = false
 local heartbeatSentAt = 0
 local lastHeartbeatAck = 0
@@ -396,7 +399,7 @@ local function clearPulledStatus(chamber)
     return nil
 end
 
-local function setChamberStatus(chamber, player, status, label)
+function setChamberStatus(chamber, player, status, label)
     chamber = tonumber(chamber)
 
     if not chamber then
@@ -432,7 +435,7 @@ local function setChamberStatus(chamber, player, status, label)
     drawMonitor()
 end
 
-local function sendStatus(ws, chamber, player, status)
+function sendStatus(ws, chamber, player, status)
     return sendMessage(ws, {
         type = "status",
         base = BASE_ID,
