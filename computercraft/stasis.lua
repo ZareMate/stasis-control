@@ -16,6 +16,9 @@ local DISPLAY_REFRESH = 1
 local PULLED_DISPLAY_TIME = 5
 
 local MONITOR = peripheral.find("monitor")
+local RADAR = peripheral.wrap("top")
+local RADAR_ENTITY = "minecraft:ender_pearl"
+local RADAR_RADIUS = 1.5
 
 local RELAYS = {
     { chamber = 1, player = "Piotrusek69", relay = "redstone_relay_20" },
@@ -30,6 +33,21 @@ local RELAYS = {
     { chamber = 10, player = "Remoteless", relay = "redstone_relay_29" },
     { chamber = 11, player = "netramen7", relay = "redstone_relay_30" },
     { chamber = 12, player = "gardja", relay = "redstone_relay_31" }
+}
+
+local CHAMBER_POSITIONS = {
+    [1] = { x = -96, y = 30, z = 268 },
+    [2] = { x = -94, y = 30, z = 267 },
+    [3] = { x = -92, y = 30, z = 266 },
+    [4] = { x = -90, y = 30, z = 265 },
+    [5] = { x = -88, y = 30, z = 264 },
+    [6] = { x = -86, y = 30, z = 263 },
+    [7] = { x = -84, y = 30, z = 262 },
+    [8] = { x = -82, y = 30, z = 261 },
+    [9] = { x = -80, y = 30, z = 260 },
+    [10] = { x = -78, y = 30, z = 259 },
+    [11] = { x = -76, y = 30, z = 258 },
+    [12] = { x = -74, y = 30, z = 258 }
 }
 
 local chambers = {}
@@ -238,6 +256,129 @@ local function drawMonitor()
     end
 end
 
+local function getPearlTracks()
+    if not RADAR or not RADAR.getTracks then
+        return nil, "Create Radar monitor not found on top"
+    end
+
+    local ok, tracks = pcall(function()
+        return RADAR.getTracks()
+    end)
+
+    if not ok then
+        return nil, tostring(tracks)
+    end
+
+    if type(tracks) ~= "table" then
+        return nil, "Radar returned invalid track data"
+    end
+
+    return tracks
+end
+
+local function pearlDetectedAt(chamber, tracks)
+    local position = CHAMBER_POSITIONS[chamber]
+
+    if not position then
+        return false
+    end
+
+    local radiusSquared = RADAR_RADIUS * RADAR_RADIUS
+
+    for _, track in pairs(tracks) do
+        if track and track.entityType == RADAR_ENTITY then
+            local p = track.position
+
+            if p and
+               p.x ~= nil and
+               p.y ~= nil and
+               p.z ~= nil then
+                local dx = tonumber(p.x) - position.x
+                local dy = tonumber(p.y) - position.y
+                local dz = tonumber(p.z) - position.z
+
+                if dx * dx + dy * dy + dz * dz <= radiusSquared then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+local function syncChamberWithRadar(ws, chamber, force)
+    local entry = chambers[chamber]
+
+    if not entry then
+        return
+    end
+
+    if not force and (
+        entry.status == "pulling" or
+        entry.status == "pulled"
+    ) then
+        return
+    end
+
+    local tracks, err = getPearlTracks()
+
+    if not tracks then
+        lastError = "Radar: " .. err
+        return
+    end
+
+    local detected = pearlDetectedAt(chamber, tracks)
+    local newStatus = detected and "ready" or "empty"
+
+    if entry.status == newStatus then
+        return
+    end
+
+    local player = entry.player or ""
+
+    setChamberStatus(chamber, player, newStatus)
+    sendStatus(ws, chamber, player, newStatus)
+end
+
+local function syncAllChambersWithRadar(ws)
+    local tracks, err = getPearlTracks()
+
+    if not tracks then
+        lastError = "Radar: " .. err
+        return
+    end
+
+    for _, relay in ipairs(RELAYS) do
+        local chamber = relay.chamber
+        local entry = chambers[chamber]
+
+        if entry and
+           entry.status ~= "pulling" and
+           entry.status ~= "pulled" then
+            local detected = pearlDetectedAt(chamber, tracks)
+            local newStatus = detected and "ready" or "empty"
+
+            if entry.status ~= newStatus then
+                local player = entry.player or ""
+
+                setChamberStatus(
+                    chamber,
+                    player,
+                    newStatus
+                )
+
+                sendStatus(
+                    ws,
+                    chamber,
+                    player,
+                    newStatus
+                )
+            end
+        end
+    end
+end
+
 local function clearPulledStatus(chamber)
     local entry = chambers[chamber]
 
@@ -427,14 +568,7 @@ local function announceConfiguredPlayers(ws)
             setChamberStatus(
                 entry.chamber,
                 entry.player,
-                "ready"
-            )
-
-            sendStatus(
-                ws,
-                entry.chamber,
-                entry.player,
-                "ready"
+                "unknown"
             )
         else
             print(
@@ -493,6 +627,7 @@ while true do
     print("Base:       " .. tostring(BASE_ID))
     print("Server:     " .. SERVER)
     print("Monitor:    " .. (MONITOR and "found" or "not found"))
+    print("Radar:      " .. (RADAR and "found" or "not found"))
     print("")
 
     wsConnected = false
@@ -519,6 +654,7 @@ while true do
 
         drawMonitor()
         announceConfiguredPlayers(ws)
+        syncAllChambersWithRadar(ws)
         sendHeartbeat(ws)
 
         local heartbeatTimer = os.startTimer(HEARTBEAT_INTERVAL)
@@ -613,16 +749,42 @@ while true do
                             local player = clearPulledStatus(chamber)
 
                             if player then
-                                sendStatus(
-                                    ws,
-                                    chamber,
-                                    player,
-                                    "ready"
-                                )
+                                local tracks = getPearlTracks()
+
+                                if tracks then
+                                    local detected = pearlDetectedAt(
+                                        chamber,
+                                        tracks
+                                    )
+
+                                    local status = detected and "ready" or "empty"
+
+                                    setChamberStatus(
+                                        chamber,
+                                        player,
+                                        status
+                                    )
+
+                                    sendStatus(
+                                        ws,
+                                        chamber,
+                                        player,
+                                        status
+                                    )
+                                else
+                                    lastError = "Radar unavailable after pulled timer"
+                                    sendStatus(
+                                        ws,
+                                        chamber,
+                                        player,
+                                        "ready"
+                                    )
+                                end
                             end
                         end
                     end
 
+                    syncAllChambersWithRadar(ws)
                     drawMonitor()
                     displayTimer = os.startTimer(DISPLAY_REFRESH)
 
@@ -632,12 +794,37 @@ while true do
                             local player = clearPulledStatus(chamber)
 
                             if player then
-                                sendStatus(
-                                    ws,
-                                    chamber,
-                                    player,
-                                    "ready"
-                                )
+                                local tracks = getPearlTracks()
+
+                                if tracks then
+                                    local detected = pearlDetectedAt(
+                                        chamber,
+                                        tracks
+                                    )
+
+                                    local status = detected and "ready" or "empty"
+
+                                    setChamberStatus(
+                                        chamber,
+                                        player,
+                                        status
+                                    )
+
+                                    sendStatus(
+                                        ws,
+                                        chamber,
+                                        player,
+                                        status
+                                    )
+                                else
+                                    lastError = "Radar unavailable after pulled timer"
+                                    sendStatus(
+                                        ws,
+                                        chamber,
+                                        player,
+                                        "ready"
+                                    )
+                                end
                             end
 
                             drawMonitor()
