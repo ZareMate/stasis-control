@@ -36,18 +36,18 @@ local RELAYS = {
 }
 
 local CHAMBER_POSITIONS = {
-    [1] = { xMin = -97, xMax = -96, yMin = 29, yMax = 31, zMin = 267, zMax = 268 },
-    [2] = { xMin = -95, xMax = -94, yMin = 29, yMax = 31, zMin = 267, zMax = 268 },
-    [3] = { xMin = -93, xMax = -92, yMin = 29, yMax = 31, zMin = 266, zMax = 267 },
-    [4] = { xMin = -91, xMax = -90, yMin = 29, yMax = 31, zMin = 265, zMax = 266 },
-    [5] = { xMin = -89, xMax = -88, yMin = 29, yMax = 31, zMin = 264, zMax = 265 },
-    [6] = { xMin = -86, xMax = -85, yMin = 29, yMax = 31, zMin = 258, zMax = 259 },
-    [7] = { xMin = -85, xMax = -84, yMin = 29, yMax = 31, zMin = 258, zMax = 259 },
-    [8] = { xMin = -83, xMax = -82, yMin = 29, yMax = 31, zMin = 258, zMax = 259 },
-    [9] = { xMin = -81, xMax = -80, yMin = 29, yMax = 31, zMin = 258, zMax = 259 },
-    [10] = { xMin = -78, xMax = -77, yMin = 29, yMax = 31, zMin = 258, zMax = 259 },
-    [11] = { xMin = -77, xMax = -76, yMin = 29, yMax = 31, zMin = 258, zMax = 259 },
-    [12] = { xMin = -75, xMax = -74, yMin = 29, yMax = 31, zMin = 258, zMax = 259 }
+    [1] = { x = -96, y = 30, z = 268 },
+    [2] = { x = -94, y = 30, z = 267 },
+    [3] = { x = -92, y = 30, z = 266 },
+    [4] = { x = -90, y = 30, z = 265 },
+    [5] = { x = -88, y = 30, z = 264 },
+    [6] = { x = -86, y = 30, z = 263 },
+    [7] = { x = -84, y = 30, z = 262 },
+    [8] = { x = -82, y = 30, z = 261 },
+    [9] = { x = -80, y = 30, z = 260 },
+    [10] = { x = -78, y = 30, z = 259 },
+    [11] = { x = -76, y = 30, z = 258 },
+    [12] = { x = -74, y = 30, z = 258 }
 }
 }
 
@@ -298,15 +298,14 @@ local function debugRadarPearls(tracks)
             local matches = {}
 
             if entityType == RADAR_ENTITY then
-                for chamber, bounds in pairs(CHAMBER_POSITIONS) do
-                    local tolerance = RADAR_POSITION_TOLERANCE
+                for chamber, position in pairs(CHAMBER_POSITIONS) do
+                    local xBlock = math.floor(x + RADAR_BLOCK_EPSILON)
+                    local yBlock = math.floor(y + RADAR_BLOCK_EPSILON)
+                    local zBlock = math.floor(z + RADAR_BLOCK_EPSILON)
 
-                    if x >= bounds.xMin - tolerance and
-                       x <= bounds.xMax + tolerance and
-                       y >= bounds.yMin - tolerance and
-                       y <= bounds.yMax + tolerance and
-                       z >= bounds.zMin - tolerance and
-                       z <= bounds.zMax + tolerance then
+                    if (xBlock == position.x or xBlock == position.x + 1) and
+                       (yBlock == position.y - 1 or yBlock == position.y) and
+                       (zBlock == position.z or zBlock == position.z + 1) then
                         table.insert(matches, tostring(chamber))
                     end
                 end
@@ -317,6 +316,10 @@ local function debugRadarPearls(tracks)
                 " | " .. tostring(entityType) ..
                 " @ " ..
                 string.format("%.2f %.2f %.2f", x, y, z) ..
+                " blocks " ..
+                tostring(math.floor(x + RADAR_BLOCK_EPSILON)) .. " " ..
+                tostring(math.floor(y + RADAR_BLOCK_EPSILON)) .. " " ..
+                tostring(math.floor(z + RADAR_BLOCK_EPSILON)) ..
                 " -> chamber " ..
                 (#matches > 0 and table.concat(matches, ",") or "NONE")
             )
@@ -334,33 +337,30 @@ end
 
 
 local function pearlDetectedAt(chamber, tracks)
-    local bounds = CHAMBER_POSITIONS[chamber]
+    local position = CHAMBER_POSITIONS[chamber]
 
-    if not bounds then
+    if not position then
         return false
     end
 
-    local tolerance = RADAR_POSITION_TOLERANCE
+    local function inTwoBlocks(value, start)
+        local block = math.floor(value + RADAR_BLOCK_EPSILON)
+        return block == start or block == start + 1
+    end
 
     for _, track in pairs(tracks) do
         if track and track.entityType == RADAR_ENTITY then
             local p = track.position
 
-            if p and
-               p.x ~= nil and
-               p.y ~= nil and
-               p.z ~= nil then
+            if p and p.x ~= nil and p.y ~= nil and p.z ~= nil then
                 local x = tonumber(p.x)
                 local y = tonumber(p.y)
                 local z = tonumber(p.z)
 
                 if x and y and z and
-                   x >= bounds.xMin - tolerance and
-                   x <= bounds.xMax + tolerance and
-                   y >= bounds.yMin - tolerance and
-                   y <= bounds.yMax + tolerance and
-                   z >= bounds.zMin - tolerance and
-                   z <= bounds.zMax + tolerance then
+                   inTwoBlocks(x, position.x) and
+                   inTwoBlocks(y, position.y - 1) and
+                   inTwoBlocks(z, position.z) then
                     return true
                 end
             end
