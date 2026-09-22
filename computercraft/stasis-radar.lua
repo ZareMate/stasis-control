@@ -363,28 +363,56 @@ local function syncAll(force)
             entry = chambers[chamber]
         end
 
-        if entry.status ~= "pulling" then
-            local ignored =
-                entry.status == "pulled" and
-                pulledUntil[chamber] and
-                now < pulledUntil[chamber]
+        local newStatus = nil
 
-            if force or not ignored then
-                local newStatus =
+        if entry.status == "pulling" then
+            -- Keep showing PULLING while the pearl is still present.
+            -- As soon as Radar sees the pearl leave, finalize the pull
+            -- ourselves. This makes the Radar process independent from
+            -- whether the pulling shell's "pulled" event is received.
+            if not detected[chamber] then
+                newStatus = "pulled"
+                pulledUntil[chamber] =
+                    now +
+                    (PULLED_DISPLAY_TIME * 1000)
+            end
+
+        elseif entry.status == "pulled" then
+            -- Keep the temporary PULLED state for the configured display
+            -- time, then immediately return to live Radar detection.
+            if not pulledUntil[chamber] or now >= pulledUntil[chamber] then
+                newStatus =
                     detected[chamber] and
                     "ready" or
                     "empty"
 
-                if force or entry.status ~= newStatus then
-                    setStatus(
-                        chamber,
-                        entry.player or relay.player,
-                        newStatus,
-                        entry.label,
-                        true
-                    )
-                end
+                pulledUntil[chamber] = nil
             end
+
+        else
+            newStatus =
+                detected[chamber] and
+                "ready" or
+                "empty"
+        end
+
+        if force and entry.status ~= "pulling" then
+            if entry.status ~= newStatus then
+                newStatus =
+                    detected[chamber] and
+                    "ready" or
+                    "empty"
+            end
+        end
+
+        if newStatus and entry.status ~= newStatus then
+            setStatus(
+                chamber,
+                entry.player or relay.player,
+                newStatus,
+                entry.label,
+                true
+            )
         end
     end
 
@@ -425,7 +453,7 @@ local function handleStatusMessage(message)
         pulledUntil[chamber] =
             os.epoch("utc") +
             (PULLED_DISPLAY_TIME * 1000)
-    else
+    elseif message.status ~= "pulling" then
         pulledUntil[chamber] = nil
     end
 
