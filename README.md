@@ -300,3 +300,24 @@ chambers
 chambers <base>
 chambers player <player>
 ```
+
+## ComputerCraft multishell controller
+
+The ComputerCraft controller is split into three independent processes:
+
+- `computercraft/stasis.lua` is the launcher and opens three multishell tabs.
+- `computercraft/stasis-boot.lua` owns the WebSocket connection, heartbeat, reconnects, and routes server commands/status updates.
+- `computercraft/stasis-radar.lua` continuously reads the Create Radar peripheral and controls chamber readiness.
+- `computercraft/stasis-pulling.lua` handles pull requests and redstone relay pulses independently from Radar.
+
+Radar and pulling therefore continue running in parallel. A relay pulse does not pause Radar scanning.
+
+Copy all four files into the same ComputerCraft directory and configure `SERVER`, `TOKEN`, `CONTROLLER_NAME`, and `BASE_ID` in `stasis-boot.lua`, plus the chamber/player/relay configuration in `stasis-radar.lua` and `stasis-pulling.lua`.
+
+Run:
+
+```text
+stasis.lua
+```
+
+The Radar process uses `entity.minecraft.ender_pearl` and the configured chamber block ranges. After a successful pull, the Radar process keeps the chamber in `pulled` for `PULLED_DISPLAY_TIME`; after that it resumes live Radar detection and reports `ready` or `empty` based on the pearl's presence.
