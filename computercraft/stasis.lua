@@ -416,9 +416,16 @@ local function syncAllChambersWithRadar(ws)
         local chamber = relay.chamber
         local entry = chambers[chamber]
 
-        if entry and
-           entry.status ~= "pulling" and
-           entry.status ~= "pulled" then
+        local canSync =
+            entry and
+            entry.status ~= "pulling" and
+            (
+                entry.status ~= "pulled" or
+                not entry.pulledUntil or
+                os.epoch("utc") >= entry.pulledUntil
+            )
+
+        if canSync then
             local detected = pearlDetectedAt(chamber, tracks)
             local newStatus = detected and "ready" or "empty"
 
@@ -819,41 +826,7 @@ while true do
                         if entry.status == "pulled" and
                            entry.pulledUntil and
                            os.epoch("utc") >= entry.pulledUntil then
-                            local player = clearPulledStatus(chamber)
-
-                            if player then
-                                local tracks = getPearlTracks()
-
-                                if tracks then
-                                    local detected = pearlDetectedAt(
-                                        chamber,
-                                        tracks
-                                    )
-
-                                    local status = detected and "ready" or "empty"
-
-                                    setChamberStatus(
-                                        chamber,
-                                        player,
-                                        status
-                                    )
-
-                                    sendStatus(
-                                        ws,
-                                        chamber,
-                                        player,
-                                        status
-                                    )
-                                else
-                                    lastError = "Radar unavailable after pulled timer"
-                                    sendStatus(
-                                        ws,
-                                        chamber,
-                                        player,
-                                        "ready"
-                                    )
-                                end
-                            end
+                            clearPulledStatus(chamber)
                         end
                     end
 
