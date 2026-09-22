@@ -440,6 +440,8 @@ print("Radar: " .. (RADAR and "found" or "missing"))
 print("Monitor: " .. (MONITOR and "found" or "missing"))
 print("")
 
+local radarTimer = os.startTimer(DISPLAY_REFRESH)
+
 while true do
     local event, a = os.pullEvent()
 
@@ -461,7 +463,10 @@ while true do
         handleStatusMessage(a)
 
     elseif event == "timer" then
-        syncAll(false)
+        if a == radarTimer then
+            syncAll(false)
+            radarTimer = os.startTimer(DISPLAY_REFRESH)
+        end
 
     elseif event == "stasis_shutdown" then
         return
@@ -472,9 +477,4 @@ while true do
     end
 
     render()
-
-    -- One timer is always kept active. It is created after each scan.
-    if event ~= "timer" then
-        os.startTimer(DISPLAY_REFRESH)
-    end
 end
