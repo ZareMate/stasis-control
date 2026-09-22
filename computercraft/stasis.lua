@@ -12,7 +12,7 @@ local BASE_ID = 1
 local PULSE_TIME = 1
 local HEARTBEAT_INTERVAL = 10
 local HEARTBEAT_TIMEOUT = 5
-local DISPLAY_REFRESH = 1
+local DISPLAY_REFRESH = 0.5
 local PULLED_DISPLAY_TIME = 5
 local RADAR_BLOCK_EPSILON = 0.001
 
@@ -458,7 +458,6 @@ local function clearPulledStatus(chamber)
         entry.status = "ready"
         entry.statusSince = os.epoch("utc")
         entry.pulledUntil = nil
-        entry.pulledTimer = nil
 
         return player
     end
@@ -493,10 +492,8 @@ function setChamberStatus(chamber, player, status, label)
 
     if status == "pulled" then
         entry.pulledUntil = os.epoch("utc") + (PULLED_DISPLAY_TIME * 1000)
-        entry.pulledTimer = os.startTimer(PULLED_DISPLAY_TIME)
     else
         entry.pulledUntil = nil
-        entry.pulledTimer = nil
     end
 
     drawMonitor()
@@ -822,11 +819,15 @@ while true do
                     end
 
                 elseif a == displayTimer then
+                    local now = os.epoch("utc")
+
                     for chamber, entry in pairs(chambers) do
                         if entry.status == "pulled" and
                            entry.pulledUntil and
-                           os.epoch("utc") >= entry.pulledUntil then
-                            clearPulledStatus(chamber)
+                           now >= entry.pulledUntil then
+                            entry.status = "unknown"
+                            entry.statusSince = now
+                            entry.pulledUntil = nil
                         end
                     end
 
@@ -834,57 +835,16 @@ while true do
 
                     if radarTracks then
                         debugRadarPearls(radarTracks)
+                        syncAllChambersWithRadar(ws)
+                        lastError = nil
                     else
+                        lastError = "Radar: " .. tostring(radarError)
                         print("[RADAR] ERROR: " .. tostring(radarError))
                     end
 
-                    syncAllChambersWithRadar(ws)
                     drawMonitor()
                     displayTimer = os.startTimer(DISPLAY_REFRESH)
 
-                else
-                    for chamber, entry in pairs(chambers) do
-                        if entry.pulledTimer == a then
-                            local player = clearPulledStatus(chamber)
-
-                            if player then
-                                local tracks = getPearlTracks()
-
-                                if tracks then
-                                    local detected = pearlDetectedAt(
-                                        chamber,
-                                        tracks
-                                    )
-
-                                    local status = detected and "ready" or "empty"
-
-                                    setChamberStatus(
-                                        chamber,
-                                        player,
-                                        status
-                                    )
-
-                                    sendStatus(
-                                        ws,
-                                        chamber,
-                                        player,
-                                        status
-                                    )
-                                else
-                                    lastError = "Radar unavailable after pulled timer"
-                                    sendStatus(
-                                        ws,
-                                        chamber,
-                                        player,
-                                        "ready"
-                                    )
-                                end
-                            end
-
-                            drawMonitor()
-                        end
-                    end
-                end
             end
         end
 
