@@ -18,7 +18,7 @@ local PULLED_DISPLAY_TIME = 5
 local MONITOR = peripheral.find("monitor")
 local RADAR = peripheral.wrap("top")
 local RADAR_ENTITY = "entity.minecraft.ender_pearl"
-local RADAR_POSITION_TOLERANCE = 0.05
+local RADAR_BLOCK_EPSILON = 0.001
 
 local RELAYS = {
     { chamber = 1, player = "Piotrusek69", relay = "redstone_relay_20" },
