@@ -18,7 +18,7 @@ local PULLED_DISPLAY_TIME = 5
 local MONITOR = peripheral.find("monitor")
 local RADAR = peripheral.wrap("top")
 local RADAR_ENTITY = "minecraft:ender_pearl"
-local RADAR_RADIUS = 1.5
+local RADAR_POSITION_TOLERANCE = 1
 
 local RELAYS = {
     { chamber = 1, player = "Piotrusek69", relay = "redstone_relay_20" },
@@ -286,8 +286,6 @@ local function pearlDetectedAt(chamber, tracks)
         return false
     end
 
-    local radiusSquared = RADAR_RADIUS * RADAR_RADIUS
-
     for _, track in pairs(tracks) do
         if track and track.entityType == RADAR_ENTITY then
             local p = track.position
@@ -296,11 +294,13 @@ local function pearlDetectedAt(chamber, tracks)
                p.x ~= nil and
                p.y ~= nil and
                p.z ~= nil then
-                local dx = tonumber(p.x) - position.x
-                local dy = tonumber(p.y) - position.y
-                local dz = tonumber(p.z) - position.z
+                local dx = math.abs(tonumber(p.x) - position.x)
+                local dy = math.abs(tonumber(p.y) - position.y)
+                local dz = math.abs(tonumber(p.z) - position.z)
 
-                if dx * dx + dy * dy + dz * dz <= radiusSquared then
+                if dx <= RADAR_POSITION_TOLERANCE and
+                   dy <= RADAR_POSITION_TOLERANCE and
+                   dz <= RADAR_POSITION_TOLERANCE then
                     return true
                 end
             end
