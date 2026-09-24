@@ -6,6 +6,7 @@ let timer = null;
 const $ = id => document.getElementById(id);
 const PLAYER_STORAGE_KEY = "stasis-player";
 let configBaseFromServer = null;
+let currentUser = null;
 
 
 function showToast(message) {
@@ -37,6 +38,10 @@ function esc(value) {
 
 async function load() {
   try {
+    const authResponse = await fetch("/api/auth", { cache: "no-store" });
+    const auth = await authResponse.json();
+    currentUser = auth.user || null;
+    renderAuth(auth.configured);
     const response = await fetch("/api/state", { cache: "no-store" });
     state = await response.json();
 
@@ -55,6 +60,27 @@ async function load() {
   } catch (error) {
     console.error("[Stasis Debug] Initial state request failed:", error);
     showToast("Unable to load dashboard state.");
+  }
+}
+
+function renderAuth(configured = true) {
+  const controls = $("authControls");
+  const config = $("configButton");
+  if (!controls || !config) return;
+  config.disabled = !currentUser;
+  config.title = currentUser ? "" : "Log in with Discord first";
+  if (!configured) {
+    controls.innerHTML = '<span class="auth-error">Discord login is not configured</span>';
+  } else if (currentUser) {
+    controls.innerHTML = '<span class="user-name">' + esc(currentUser.username) + '</span><button class="login-button" id="logoutButton">LOG OUT</button>';
+    $("logoutButton").onclick = async () => {
+      await fetch("/auth/logout", { method: "POST" });
+      currentUser = null;
+      renderAuth(configured);
+      render();
+    };
+  } else {
+    controls.innerHTML = '<a class="login-button" href="/auth/discord">LOG IN WITH DISCORD</a>';
   }
 }
 
@@ -307,6 +333,7 @@ function render() {
               : "EMPTY";
 
       const canPull =
+        Boolean(currentUser) &&
         Boolean(chamber.player) &&
         chamber.status === "ready";
 
@@ -365,15 +392,20 @@ function logs() {
         esc(entry.type) +
       "</span>" +
       "<span>" +
+        esc(entry.actor ? entry.actor + " pulled " : "") +
         esc(entry.player || "—") +
-        ' <span class="log-detail">Chamber ' +
+        ' <span class="log-detail">at Chamber ' +
           esc(entry.chamber ?? "—") +
-        "</span></span>" +
+      "</span></span>" +
     "</div>"
   ).join("");
 }
 
 function openPull(chamber) {
+  if (!currentUser) {
+    showToast("Log in with Discord to pull a pearl");
+    return;
+  }
   pending = chamber;
 
   $("modalTitle").textContent =
@@ -513,6 +545,10 @@ async function loadPreference(player) {
 }
 
 async function saveConfig() {
+  if (!currentUser) {
+    showToast("Log in with Discord to save configuration");
+    return;
+  }
   const player = $("configPlayer").value.trim();
   const defaultBase = Number($("configBase").value);
 

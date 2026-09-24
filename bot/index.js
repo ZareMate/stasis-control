@@ -486,7 +486,7 @@ function phraseMatches(text) {
   return true;
 }
 
-async function pullPlayer(player) {
+async function pullPlayer(player, actor = "Discord bot user") {
   const response = await fetch(
     STASIS_API_URL + "/api/pull-player",
     {
@@ -495,7 +495,7 @@ async function pullPlayer(player) {
         "Content-Type": "application/json",
         "X-Stasis-Pull-Token": PULL_API_TOKEN
       },
-      body: JSON.stringify({ player }),
+      body: JSON.stringify({ player, actor }),
       signal: AbortSignal.timeout(5000)
     }
   );
@@ -902,7 +902,8 @@ function startSpeechStream(session, userId) {
 
         try {
           const result = await pullPlayer(
-            VOICE_TRIGGER_PLAYER
+            VOICE_TRIGGER_PLAYER,
+            session.listenerName + " (" + session.listenerUserId + ") via voice"
           );
 
           console.log(
@@ -1074,7 +1075,7 @@ client.on("interactionCreate", async interaction => {
     }
 
     try {
-      const result = await pullPlayer(player);
+      const result = await pullPlayer(player, interaction.user.tag + " (" + interaction.user.id + ")");
 
       await editCommand(
         interaction,

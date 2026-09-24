@@ -29,7 +29,42 @@ function debugLog(...args) {
 
 const DATA_DIR = process.env.STASIS_DATA_DIR || path.join(ROOT, "data");
 const PREFERENCES_FILE = path.join(DATA_DIR, "player-preferences.json");
+const LOGS_FILE = path.join(DATA_DIR, "activity-logs.json");
 const PULL_API_TOKEN = process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN || "";
+const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
+const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
+const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || "";
+const AUTH_COOKIE = "stasis_session";
+const sessions = new Map();
+const oauthStates = new Map();
+
+function parseCookies(header = "") {
+  return Object.fromEntries(header.split(";").map(part => {
+    const index = part.indexOf("=");
+    return index < 0 ? ["", ""] : [part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())];
+  }).filter(([key]) => key));
+}
+
+function sessionUser(req) {
+  const token = parseCookies(req.headers.cookie)[AUTH_COOKIE];
+  const session = token && sessions.get(token);
+  if (!session || session.expiresAt < Date.now()) {
+    if (token) sessions.delete(token);
+    return null;
+  }
+  return session.user;
+}
+
+function requireLogin(req, res, next) {
+  const user = sessionUser(req);
+  if (!user) return res.status(401).json({ error: "Log in with Discord to continue" });
+  req.discordUser = user;
+  next();
+}
+
+function loginConfigured() {
+  return Boolean(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET && DISCORD_REDIRECT_URI);
+}
 
 function loadPreferences() {
   try {
@@ -41,6 +76,13 @@ function loadPreferences() {
 }
 
 let playerPreferences = loadPreferences();
+
+try {
+  const savedLogs = JSON.parse(fs.readFileSync(LOGS_FILE, "utf8"));
+  if (Array.isArray(savedLogs)) logs.push(...savedLogs.slice(0, 50));
+} catch {
+  // Activity history is created the first time the server records an event.
+}
 
 function savePreferences() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -157,7 +199,7 @@ function resolvePlayerChamber(player, requestedBase = null) {
   return { report: reports[0] };
 }
 
-function executePull(base, chamber) {
+function executePull(base, chamber, actor = "Unknown") {
   const key = chamberKey(base, chamber);
   const report = collectReports().get(key);
 
@@ -268,7 +310,8 @@ function executePull(base, chamber) {
     chamber,
     report.player,
     controller.baseName + " / " + controller.controllerName,
-    base
+    base,
+    actor
   );
 
   return {
@@ -288,6 +331,57 @@ if (!CONTROLLER_TOKEN) {
 
 app.use(express.json({ limit: "32kb" }));
 app.use(express.static(path.join(ROOT, "public")));
+
+app.get("/auth/discord", (req, res) => {
+  if (!loginConfigured()) return res.status(503).send("Discord login is not configured on this server.");
+  const state = crypto.randomBytes(24).toString("hex");
+  oauthStates.set(state, Date.now() + 10 * 60 * 1000);
+  const url = new URL("https://discord.com/oauth2/authorize");
+  url.searchParams.set("client_id", DISCORD_CLIENT_ID);
+  url.searchParams.set("redirect_uri", DISCORD_REDIRECT_URI);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", "identify");
+  url.searchParams.set("state", state);
+  res.redirect(url.toString());
+});
+
+app.get("/auth/discord/callback", async (req, res) => {
+  const state = String(req.query.state || "");
+  const expires = oauthStates.get(state);
+  oauthStates.delete(state);
+  if (!loginConfigured() || !req.query.code || !expires || expires < Date.now() || req.query.error) {
+    return res.redirect("/?login=failed");
+  }
+  try {
+    const tokenResponse = await fetch("https://discord.com/api/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: DISCORD_CLIENT_ID, client_secret: DISCORD_CLIENT_SECRET, grant_type: "authorization_code", code: String(req.query.code), redirect_uri: DISCORD_REDIRECT_URI })
+    });
+    if (!tokenResponse.ok) throw new Error("Discord token exchange failed");
+    const token = await tokenResponse.json();
+    const userResponse = await fetch("https://discord.com/api/users/@me", { headers: { Authorization: "Bearer " + token.access_token } });
+    if (!userResponse.ok) throw new Error("Discord identity lookup failed");
+    const identity = await userResponse.json();
+    const user = { id: String(identity.id), username: identity.global_name || identity.username, avatar: identity.avatar || null };
+    const sessionToken = crypto.randomBytes(32).toString("hex");
+    sessions.set(sessionToken, { user, expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000 });
+    const secure = req.secure || req.get("x-forwarded-proto") === "https";
+    res.setHeader("Set-Cookie", `${AUTH_COOKIE}=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secure ? "; Secure" : ""}`);
+    res.redirect("/");
+  } catch (error) {
+    console.error("[Auth] Discord login failed:", error.message);
+    res.redirect("/?login=failed");
+  }
+});
+
+app.get("/api/auth", (req, res) => res.json({ configured: loginConfigured(), user: sessionUser(req) }));
+app.post("/auth/logout", (req, res) => {
+  const token = parseCookies(req.headers.cookie)[AUTH_COOKIE];
+  if (token) sessions.delete(token);
+  res.setHeader("Set-Cookie", `${AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  res.json({ ok: true });
+});
 
 function safeSend(ws, message) {
   if (ws.readyState === WebSocket.OPEN) {
@@ -314,18 +408,26 @@ function browserClients() {
   return [...clients].filter(client => client.role === "browser");
 }
 
-function addLog(type, chamber, player, detail, base) {
+function addLog(type, chamber, player, detail, base, actor = "") {
   const entry = {
     time: new Date().toISOString(),
     type,
     chamber: chamber ?? null,
     player: player || "",
     detail: detail || "",
-    base: base ?? null
+    base: base ?? null,
+    actor: actor || ""
   };
 
   logs.unshift(entry);
   logs.splice(50);
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(LOGS_FILE + ".tmp", JSON.stringify(logs, null, 2) + "\n", "utf8");
+    fs.renameSync(LOGS_FILE + ".tmp", LOGS_FILE);
+  } catch (error) {
+    console.error("[Logs] Unable to persist activity history:", error.message);
+  }
 
   broadcast({ type: "log", entry });
 }
@@ -893,7 +995,7 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-app.get("/api/preference", (req, res) => {
+app.get("/api/preference", requireLogin, (req, res) => {
   const player = String(req.query.player || "").trim();
 
   if (!player) {
@@ -908,7 +1010,7 @@ app.get("/api/preference", (req, res) => {
   });
 });
 
-app.post("/api/preference", (req, res) => {
+app.post("/api/preference", requireLogin, (req, res) => {
   try {
     const player = String(req.body?.player || "").trim();
     const defaultBase = Number(req.body?.defaultBase);
@@ -983,6 +1085,8 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.post("/api/pull", (req, res) => {
+  const user = sessionUser(req);
+  if (!user) return res.status(401).json({ error: "Log in with Discord to pull a pearl" });
   const base = Number(req.body && req.body.base);
   const chamber = Number(req.body && req.body.chamber);
 
@@ -992,7 +1096,7 @@ app.post("/api/pull", (req, res) => {
     });
   }
 
-  const result = executePull(base, chamber);
+  const result = executePull(base, chamber, `${user.username} (${user.id})`);
 
   if (result.error) {
     return res.status(result.error).json(result.body);
@@ -1059,9 +1163,11 @@ function handlePlayerPullRequest(req, res, requirePullToken = true) {
     });
   }
 
+  const actor = req.body?.actor && typeof req.body.actor === "string" ? req.body.actor.slice(0, 100) : "Discord bot user";
   const result = executePull(
     resolved.report.base,
-    resolved.report.id
+    resolved.report.id,
+    actor
   );
 
   if (result.error) {

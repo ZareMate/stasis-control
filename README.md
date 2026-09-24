@@ -30,6 +30,18 @@ npm start
 
 Dashboard: `http://YOUR_SERVER_IP:3000`
 
+## Dashboard Discord login
+
+Create a Discord application and add the exact callback URL `https://YOUR_DOMAIN/auth/discord/callback` to its OAuth2 redirect URLs. Configure:
+
+```env
+DISCORD_CLIENT_ID=your-discord-application-id
+DISCORD_CLIENT_SECRET=your-discord-client-secret
+DISCORD_REDIRECT_URI=https://YOUR_DOMAIN/auth/discord/callback
+```
+
+The dashboard uses Discord's `identify` scope. Pull and player configuration actions require a signed-in dashboard session; the server checks this independently of the disabled UI controls. Sessions are held in memory for seven days and are cleared when the server restarts. Dashboard pull activity records the Discord username and ID alongside the Minecraft player and chamber. Bot pulls include the invoking Discord user in the activity log. The latest 50 activity entries are persisted in `data/activity-logs.json` (or under `STASIS_DATA_DIR`).
+
 ## Controller registration
 
 After opening the WebSocket, a ComputerCraft controller sends:
