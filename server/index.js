@@ -35,6 +35,7 @@ const DATA_DIR = process.env.STASIS_DATA_DIR || path.join(ROOT, "data");
 const PREFERENCES_FILE = path.join(DATA_DIR, "player-preferences.json");
 const LOGS_FILE = path.join(DATA_DIR, "activity-logs.json");
 const DISCORD_USERS_FILE = path.join(DATA_DIR, "discord-users.json");
+const DISCORD_SESSIONS_FILE = path.join(DATA_DIR, "discord-sessions.json");
 const PULL_API_TOKEN = process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN || "";
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
@@ -45,6 +46,31 @@ const REQUIRED_ROLE_ID = "1552640238168580167";
 const AUTH_COOKIE = "stasis_session";
 const sessions = new Map();
 const oauthStates = new Map();
+const refreshPromises = new WeakMap();
+
+try {
+  const savedSessions = JSON.parse(fs.readFileSync(DISCORD_SESSIONS_FILE, "utf8"));
+  for (const [tokenHash, session] of Object.entries(savedSessions)) {
+    if (session?.expiresAt > Date.now() && session?.user?.id) sessions.set(tokenHash, session);
+  }
+} catch {
+  // Sessions are created after the first successful Discord login.
+}
+
+function sessionTokenHash(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function saveSessions() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  for (const [key, session] of sessions) {
+    if (session.expiresAt <= Date.now()) sessions.delete(key);
+  }
+  const temporary = DISCORD_SESSIONS_FILE + ".tmp";
+  fs.writeFileSync(temporary, JSON.stringify(Object.fromEntries(sessions), null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
+  fs.chmodSync(temporary, 0o600);
+  fs.renameSync(temporary, DISCORD_SESSIONS_FILE);
+}
 
 function parseCookies(header = "") {
   return Object.fromEntries(header.split(";").map(part => {
@@ -54,13 +80,7 @@ function parseCookies(header = "") {
 }
 
 function sessionUser(req) {
-  const token = parseCookies(req.headers.cookie)[AUTH_COOKIE];
-  const session = token && sessions.get(token);
-  if (!session || session.expiresAt < Date.now()) {
-    if (token) sessions.delete(token);
-    return null;
-  }
-  return session.user;
+  return sessionFor(req)?.user || null;
 }
 
 function requireLogin(req, res, next) {
@@ -73,28 +93,77 @@ function requireLogin(req, res, next) {
 
 function sessionFor(req) {
   const token = parseCookies(req.headers.cookie)[AUTH_COOKIE];
-  const session = token && sessions.get(token);
+  const key = token && sessionTokenHash(token);
+  const session = key && sessions.get(key);
   if (!session || session.expiresAt < Date.now()) {
-    if (token) sessions.delete(token);
+    if (key && sessions.delete(key)) saveSessions();
     return null;
   }
   return session;
 }
 
+async function refreshDiscordToken(session) {
+  if (session.tokenExpiresAt > Date.now() + 60_000) return true;
+  if (!session.refreshToken) return false;
+  if (refreshPromises.has(session)) return refreshPromises.get(session);
+
+  const refresh = (async () => {
+    try {
+      const response = await fetch("https://discord.com/api/oauth2/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: DISCORD_CLIENT_ID,
+          client_secret: DISCORD_CLIENT_SECRET,
+          grant_type: "refresh_token",
+          refresh_token: session.refreshToken
+        }),
+        signal: AbortSignal.timeout(5000)
+      });
+      if (!response.ok) {
+        console.warn("[Auth] Discord token refresh returned HTTP", response.status);
+        return false;
+      }
+      const token = await response.json();
+      session.accessToken = token.access_token;
+      session.refreshToken = token.refresh_token || session.refreshToken;
+      session.tokenExpiresAt = Date.now() + (Number(token.expires_in) || 604800) * 1000;
+      saveSessions();
+      return true;
+    } catch (error) {
+      console.error("[Auth] Discord token refresh failed:", error.message);
+      return false;
+    }
+  })();
+
+  refreshPromises.set(session, refresh);
+  try {
+    return await refresh;
+  } finally {
+    refreshPromises.delete(session);
+  }
+}
+
 async function userHasRequiredRole(session) {
   if (!session?.accessToken) return false;
+  await refreshDiscordToken(session);
   try {
     const response = await fetch(`https://discord.com/api/v10/users/@me/guilds/${ACCESS_GUILD_ID}/member`, {
       headers: { Authorization: `Bearer ${session.accessToken}` },
       signal: AbortSignal.timeout(5000)
     });
-    if (!response.ok) return false;
-    const member = await response.json();
-    return Array.isArray(member.roles) && member.roles.includes(REQUIRED_ROLE_ID);
+    if (response.ok) {
+      const member = await response.json();
+      if (Array.isArray(member.roles) && member.roles.includes(REQUIRED_ROLE_ID)) return true;
+    } else {
+      console.warn("[Auth] OAuth guild-member lookup returned HTTP", response.status);
+    }
   } catch (error) {
     console.error("[Auth] Guild role check failed:", error.message);
-    return false;
   }
+
+  // The bot endpoint is an independent confirmation path for role assignments.
+  return botUserHasRequiredRole(session.user?.id);
 }
 
 async function requireGuildRole(req, res, next) {
@@ -454,11 +523,14 @@ app.get("/auth/discord/callback", async (req, res) => {
     const session = {
       user,
       accessToken: token.access_token,
-      expiresAt: Date.now() + Math.min(7 * 24 * 60 * 60, Number(token.expires_in) || 7 * 24 * 60 * 60) * 1000
+      refreshToken: token.refresh_token || null,
+      tokenExpiresAt: Date.now() + (Number(token.expires_in) || 604800) * 1000,
+      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000
     };
-    sessions.set(sessionToken, session);
+    sessions.set(sessionTokenHash(sessionToken), session);
+    saveSessions();
     const secure = req.secure || req.get("x-forwarded-proto") === "https";
-    res.setHeader("Set-Cookie", `${AUTH_COOKIE}=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secure ? "; Secure" : ""}`);
+    res.setHeader("Set-Cookie", `${AUTH_COOKIE}=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}`);
     res.redirect(await userHasRequiredRole(session) ? "/" : "/access-denied");
   } catch (error) {
     console.error("[Auth] Discord login failed:", error.message);
@@ -500,7 +572,7 @@ app.get("/api/logs", requireLogin, requireGuildRole, (req, res) => {
 });
 app.post("/auth/logout", (req, res) => {
   const token = parseCookies(req.headers.cookie)[AUTH_COOKIE];
-  if (token) sessions.delete(token);
+  if (token && sessions.delete(sessionTokenHash(token))) saveSessions();
   res.setHeader("Set-Cookie", `${AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
   res.json({ ok: true });
 });
@@ -1251,7 +1323,10 @@ async function botUserHasRequiredRole(userId) {
       headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}` },
       signal: AbortSignal.timeout(5000)
     });
-    if (!response.ok) return false;
+    if (!response.ok) {
+      console.warn("[Auth] Bot guild-member lookup returned HTTP", response.status);
+      return false;
+    }
     const member = await response.json();
     return Array.isArray(member.roles) && member.roles.includes(REQUIRED_ROLE_ID);
   } catch (error) {

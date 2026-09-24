@@ -5,5 +5,6 @@ npm-debug.log*
 data/player-preferences.json
 data/activity-logs.json
 data/discord-users.json
+data/discord-sessions.json
 models/
 whisper.cpp/
