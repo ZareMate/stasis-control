@@ -2,6 +2,7 @@ local args = { ... }
 
 local SERVER_URL = "http://127.0.0.1:3000"
 local STASIS_TOKEN = "replace-with-your-stasis-token"
+local DISCORD_USER_ID = "replace-with-your-discord-user-id"
 
 local function usage()
     print("Usage:")
@@ -105,7 +106,8 @@ else
 end
 
 local bodyTable = {
-    player = player
+    player = player,
+    discordUserId = DISCORD_USER_ID
 }
 
 if base then

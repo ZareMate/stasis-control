@@ -39,6 +39,9 @@ const PULL_API_TOKEN = process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN ||
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
 const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || "";
+const DISCORD_BOT_TOKEN = process.env.DISCORD_TOKEN || "";
+const ACCESS_GUILD_ID = "1543358966300545116";
+const REQUIRED_ROLE_ID = "1552640238168580167";
 const AUTH_COOKIE = "stasis_session";
 const sessions = new Map();
 const oauthStates = new Map();
@@ -61,9 +64,43 @@ function sessionUser(req) {
 }
 
 function requireLogin(req, res, next) {
-  const user = sessionUser(req);
-  if (!user) return res.status(401).json({ error: "Log in with Discord to continue" });
-  req.discordUser = user;
+  const session = sessionFor(req);
+  if (!session) return res.status(401).json({ error: "Log in with Discord to continue" });
+  req.discordSession = session;
+  req.discordUser = session.user;
+  next();
+}
+
+function sessionFor(req) {
+  const token = parseCookies(req.headers.cookie)[AUTH_COOKIE];
+  const session = token && sessions.get(token);
+  if (!session || session.expiresAt < Date.now()) {
+    if (token) sessions.delete(token);
+    return null;
+  }
+  return session;
+}
+
+async function userHasRequiredRole(session) {
+  if (!session?.accessToken) return false;
+  try {
+    const response = await fetch(`https://discord.com/api/v10/users/@me/guilds/${ACCESS_GUILD_ID}/member`, {
+      headers: { Authorization: `Bearer ${session.accessToken}` },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!response.ok) return false;
+    const member = await response.json();
+    return Array.isArray(member.roles) && member.roles.includes(REQUIRED_ROLE_ID);
+  } catch (error) {
+    console.error("[Auth] Guild role check failed:", error.message);
+    return false;
+  }
+}
+
+async function requireGuildRole(req, res, next) {
+  if (!(await userHasRequiredRole(req.discordSession))) {
+    return res.status(403).json({ error: "Contact Dons via Discord" });
+  }
   next();
 }
 
@@ -384,7 +421,7 @@ app.get("/auth/discord", (req, res) => {
   url.searchParams.set("client_id", DISCORD_CLIENT_ID);
   url.searchParams.set("redirect_uri", DISCORD_REDIRECT_URI);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", "identify email");
+  url.searchParams.set("scope", "identify email guilds guilds.members.read");
   url.searchParams.set("state", state);
   res.redirect(url.toString());
 });
@@ -414,10 +451,15 @@ app.get("/auth/discord/callback", async (req, res) => {
       avatar: identity.avatar || null
     };
     const sessionToken = crypto.randomBytes(32).toString("hex");
-    sessions.set(sessionToken, { user, expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000 });
+    const session = {
+      user,
+      accessToken: token.access_token,
+      expiresAt: Date.now() + Math.min(7 * 24 * 60 * 60, Number(token.expires_in) || 7 * 24 * 60 * 60) * 1000
+    };
+    sessions.set(sessionToken, session);
     const secure = req.secure || req.get("x-forwarded-proto") === "https";
     res.setHeader("Set-Cookie", `${AUTH_COOKIE}=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secure ? "; Secure" : ""}`);
-    res.redirect("/");
+    res.redirect(await userHasRequiredRole(session) ? "/" : "/access-denied");
   } catch (error) {
     console.error("[Auth] Discord login failed:", error.message);
     res.redirect("/?login=failed");
@@ -426,13 +468,22 @@ app.get("/auth/discord/callback", async (req, res) => {
 
 app.get("/api/auth", (req, res) => {
   const user = sessionUser(req);
-  res.json({ configured: loginConfigured(), user: user && { id: user.id, username: user.username, avatar: user.avatar } });
+  if (!user) return res.json({ configured: loginConfigured(), user: null, allowed: false });
+  const session = sessionFor(req);
+  userHasRequiredRole(session).then(allowed => res.json({
+    configured: loginConfigured(),
+    user: { id: user.id, username: user.username, avatar: user.avatar },
+    allowed
+  })).catch(() => res.json({ configured: loginConfigured(), user: null, allowed: false }));
 });
-app.get("/logs", (req, res) => {
-  if (!sessionUser(req)) return res.redirect(loginConfigured() ? "/auth/discord" : "/");
+app.get("/access-denied", (_req, res) => res.sendFile(path.join(ROOT, "views", "access-denied.html")));
+app.get("/logs", async (req, res) => {
+  const session = sessionFor(req);
+  if (!session) return res.redirect(loginConfigured() ? "/auth/discord" : "/");
+  if (!(await userHasRequiredRole(session))) return res.redirect("/access-denied");
   res.sendFile(path.join(ROOT, "views", "logs.html"));
 });
-app.get("/api/logs", requireLogin, (req, res) => {
+app.get("/api/logs", requireLogin, requireGuildRole, (req, res) => {
   const type = String(req.query.type || "").trim().toUpperCase();
   const actor = String(req.query.user || "").trim();
   const safeLogs = logs.map(publicLog);
@@ -500,7 +551,7 @@ function addLog(type, chamber, player, detail, base, actor = "") {
     console.error("[Logs] Unable to persist activity history:", error.message);
   }
 
-  broadcast({ type: "log", entry });
+  // Activity history is served only through the role-protected /api/logs endpoint.
 }
 
 function chamberKey(base, chamber) {
@@ -691,7 +742,7 @@ function snapshot() {
   const result = {
     bases: baseList,
     chambers,
-    logs: logs.map(publicLog),
+    logs: [],
     controllers: controllerClients().length,
     browsers: browserClients().length,
     playerCount: reportedPlayerCount(),
@@ -1155,7 +1206,7 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-app.post("/api/pull", (req, res) => {
+app.post("/api/pull", requireLogin, requireGuildRole, (req, res) => {
   const user = sessionUser(req);
   if (!user) return res.status(401).json({ error: "Log in with Discord to pull a pearl" });
   const base = Number(req.body && req.body.base);
@@ -1193,7 +1244,23 @@ function authorizedComputerRequest(req) {
   );
 }
 
-function handlePlayerPullRequest(req, res, requirePullToken = true) {
+async function botUserHasRequiredRole(userId) {
+  if (!DISCORD_BOT_TOKEN || !/^\d+$/.test(String(userId || ""))) return false;
+  try {
+    const response = await fetch(`https://discord.com/api/v10/guilds/${ACCESS_GUILD_ID}/members/${userId}`, {
+      headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}` },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!response.ok) return false;
+    const member = await response.json();
+    return Array.isArray(member.roles) && member.roles.includes(REQUIRED_ROLE_ID);
+  } catch (error) {
+    console.error("[Auth] Bot guild role check failed:", error.message);
+    return false;
+  }
+}
+
+async function handlePlayerPullRequest(req, res, requirePullToken = true) {
   if (
     requirePullToken
       ? !PULL_API_TOKEN || req.get("x-stasis-pull-token") !== PULL_API_TOKEN
@@ -1202,6 +1269,10 @@ function handlePlayerPullRequest(req, res, requirePullToken = true) {
     return res.status(401).json({
       error: "Unauthorized"
     });
+  }
+
+  if (!(await botUserHasRequiredRole(req.body?.discordUserId))) {
+    return res.status(403).json({ error: "Contact Dons via Discord" });
   }
 
   const player = String(req.body?.player || "").trim();

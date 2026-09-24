@@ -7,6 +7,7 @@ const $ = id => document.getElementById(id);
 const PLAYER_STORAGE_KEY = "stasis-player";
 let configBaseFromServer = null;
 let currentUser = null;
+let currentUserAllowed = false;
 
 
 function showToast(message) {
@@ -41,6 +42,7 @@ async function load() {
     const authResponse = await fetch("/api/auth", { cache: "no-store" });
     const auth = await authResponse.json();
     currentUser = auth.user || null;
+    currentUserAllowed = auth.allowed === true;
     renderAuth(auth.configured);
     const response = await fetch("/api/state", { cache: "no-store" });
     state = await response.json();
@@ -72,10 +74,11 @@ function renderAuth(configured = true) {
   if (!configured) {
     controls.innerHTML = '<span class="auth-error">Discord login is not configured</span>';
   } else if (currentUser) {
-    controls.innerHTML = '<span class="user-name">' + esc(currentUser.username) + '</span><button class="login-button" id="logoutButton">LOG OUT</button>';
+    controls.innerHTML = '<span class="user-name">' + esc(currentUser.username) + '</span>' + (currentUserAllowed ? '' : '<span class="auth-error">Contact Dons via Discord</span>') + '<button class="login-button" id="logoutButton">LOG OUT</button>';
     $("logoutButton").onclick = async () => {
       await fetch("/auth/logout", { method: "POST" });
       currentUser = null;
+      currentUserAllowed = false;
       renderAuth(configured);
       render();
     };
@@ -333,7 +336,7 @@ function render() {
               : "EMPTY";
 
       const canPull =
-        Boolean(currentUser) &&
+        currentUserAllowed &&
         Boolean(chamber.player) &&
         chamber.status === "ready";
 
@@ -402,8 +405,8 @@ function logs() {
 }
 
 function openPull(chamber) {
-  if (!currentUser) {
-    showToast("Log in with Discord to pull a pearl");
+  if (!currentUser || !currentUserAllowed) {
+    showToast(currentUser ? "Contact Dons via Discord" : "Log in with Discord to pull a pearl");
     return;
   }
   pending = chamber;
@@ -446,6 +449,10 @@ async function pull() {
     const result = await response.json();
 
     if (!response.ok) {
+      if (response.status === 403) {
+        location.assign("/access-denied");
+        return;
+      }
       showToast(result.error || "Pull failed");
     } else {
       showToast(chamber.player + " pull command sent");

@@ -43,6 +43,8 @@
     async function loadOptions() {
       const response = await fetch("/api/logs", { cache: "no-store" });
       if (response.status === 401) { location.assign("/"); return; }
+      if (response.status === 403) { location.assign("/access-denied"); return; }
+      if (response.status === 403) { location.assign("/access-denied"); return; }
       const data = await response.json();
       document.getElementById("user").textContent = data.currentUser || "";
       for (const type of data.types) typeFilter.insertAdjacentHTML("beforeend", '<option value="' + esc(type) + '">' + esc(type) + '</option>');
@@ -56,6 +58,8 @@
       if (userFilter.value) query.set("user", userFilter.value);
       const response = await fetch("/api/logs?" + query.toString(), { cache: "no-store" });
       if (response.status === 401) { location.assign("/"); return; }
+      if (response.status === 403) { location.assign("/access-denied"); return; }
+      if (response.status === 403) { location.assign("/access-denied"); return; }
       const data = await response.json();
       render(data.logs);
     }

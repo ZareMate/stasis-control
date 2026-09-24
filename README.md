@@ -40,9 +40,9 @@ DISCORD_CLIENT_SECRET=your-discord-client-secret
 DISCORD_REDIRECT_URI=https://YOUR_DOMAIN/auth/discord/callback
 ```
 
-The dashboard requests Discord's `identify` and `email` scopes. Discord's returned profile, including email when available and authorized, and the visitor IP are saved in `data/discord-users.json` (or under `STASIS_DATA_DIR`); email is not shown in dashboard or log responses. Profile fields returned by Discord are saved as received. IP history keeps the latest 20 distinct addresses per account. When the app is behind a reverse proxy, set `TRUST_PROXY` to the number of trusted proxy hops so Express can identify the visitor IP; leave it unset for direct connections. Pull and player configuration actions require a signed-in dashboard session; the server checks this independently of the disabled UI controls. Sessions are held in memory for seven days and are cleared when the server restarts. Pull activity records the Discord username and ID alongside the Minecraft player and chamber. Bot pulls include the invoking Discord user in the activity log. The latest 50 activity entries are persisted in `data/activity-logs.json` (or under `STASIS_DATA_DIR`).
+The dashboard requests Discord's `identify`, `email`, `guilds`, and `guilds.members.read` scopes. Discord's returned profile, including email when available and authorized, and the visitor IP are saved in `data/discord-users.json` (or under `STASIS_DATA_DIR`); email is not shown in dashboard or log responses. Profile fields returned by Discord are saved as received. IP history keeps the latest 20 distinct addresses per account. When the app is behind a reverse proxy, set `TRUST_PROXY` to the number of trusted proxy hops so Express can identify the visitor IP; leave it unset for direct connections. Pulling and viewing logs requires role `1552640238168580167` in Discord server `1543358966300545116`. The server checks role membership when handling each pull or logs request; accounts without access are sent to `/access-denied`. The Discord bot must be a member of the configured server so the server can verify `/pull player` and ComputerCraft API requests. Sessions expire with the Discord OAuth access token and are cleared when the server restarts. Pull activity records the Discord username and ID alongside the Minecraft player and chamber. The latest 50 activity entries are persisted in `data/activity-logs.json` (or under `STASIS_DATA_DIR`).
 
-The `/logs` page and `/api/logs` endpoint require a dashboard Discord session. The page supports filtering by activity type and requesting user.
+The `/logs` page and `/api/logs` endpoint require a dashboard Discord session with the required server role. Public dashboard state and WebSocket updates do not include activity entries. The page supports filtering by activity type and requesting user.
 
 ## Controller registration
 
@@ -286,7 +286,7 @@ pull <player>
 pull <base> <player>
 ```
 
-Set `SERVER_URL` and `STASIS_TOKEN` at the top of the program before using it.
+Set `SERVER_URL`, `STASIS_TOKEN`, and `DISCORD_USER_ID` at the top of the program before using it. ComputerCraft pull requests are checked against that Discord account's current role membership.
 
 ## ComputerCraft chamber API
 
