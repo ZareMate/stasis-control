@@ -3,5 +3,7 @@ node_modules/
 npm-debug.log*
 .DS_Store
 data/player-preferences.json
+data/activity-logs.json
+data/discord-users.json
 models/
 whisper.cpp/

@@ -9,6 +9,10 @@ const { WebSocketServer, WebSocket } = require("ws");
 
 const ROOT = path.join(__dirname, "..");
 const app = express();
+if (process.env.TRUST_PROXY) {
+  const proxySetting = process.env.TRUST_PROXY;
+  app.set("trust proxy", proxySetting === "true" ? true : Number(proxySetting));
+}
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
@@ -30,6 +34,7 @@ function debugLog(...args) {
 const DATA_DIR = process.env.STASIS_DATA_DIR || path.join(ROOT, "data");
 const PREFERENCES_FILE = path.join(DATA_DIR, "player-preferences.json");
 const LOGS_FILE = path.join(DATA_DIR, "activity-logs.json");
+const DISCORD_USERS_FILE = path.join(DATA_DIR, "discord-users.json");
 const PULL_API_TOKEN = process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN || "";
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
@@ -64,6 +69,45 @@ function requireLogin(req, res, next) {
 
 function loginConfigured() {
   return Boolean(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET && DISCORD_REDIRECT_URI);
+}
+
+function clientIp(req) {
+  return req.ip || req.socket?.remoteAddress || "unknown";
+}
+
+function loadDiscordUsers() {
+  try {
+    const value = JSON.parse(fs.readFileSync(DISCORD_USERS_FILE, "utf8"));
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+let discordUsers = loadDiscordUsers();
+
+function saveDiscordUser(discordProfile, ip) {
+  const id = String(discordProfile.id);
+  const previous = discordUsers[id] || {};
+  const ips = [...new Set([...(previous.ips || []), ip].filter(Boolean))].slice(-20);
+  discordUsers[id] = {
+    discord: discordProfile,
+    ips,
+    createdAt: previous.createdAt || new Date().toISOString(),
+    lastSeenAt: new Date().toISOString()
+  };
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const temporary = DISCORD_USERS_FILE + ".tmp";
+  fs.writeFileSync(temporary, JSON.stringify(discordUsers, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
+  fs.chmodSync(temporary, 0o600);
+  fs.renameSync(temporary, DISCORD_USERS_FILE);
+}
+
+function publicLog(entry) {
+  return {
+    ...entry,
+    actor: String(entry.actor || "").replace(/\s*<[^<>]*@[^<>]*>/g, "").trim()
+  };
 }
 
 function loadPreferences() {
@@ -363,10 +407,10 @@ app.get("/auth/discord/callback", async (req, res) => {
     const userResponse = await fetch("https://discord.com/api/users/@me", { headers: { Authorization: "Bearer " + token.access_token } });
     if (!userResponse.ok) throw new Error("Discord identity lookup failed");
     const identity = await userResponse.json();
+    saveDiscordUser(identity, clientIp(req));
     const user = {
       id: String(identity.id),
       username: identity.global_name || identity.username,
-      email: typeof identity.email === "string" ? identity.email : null,
       avatar: identity.avatar || null
     };
     const sessionToken = crypto.randomBytes(32).toString("hex");
@@ -380,7 +424,10 @@ app.get("/auth/discord/callback", async (req, res) => {
   }
 });
 
-app.get("/api/auth", (req, res) => res.json({ configured: loginConfigured(), user: sessionUser(req) }));
+app.get("/api/auth", (req, res) => {
+  const user = sessionUser(req);
+  res.json({ configured: loginConfigured(), user: user && { id: user.id, username: user.username, avatar: user.avatar } });
+});
 app.get("/logs", (req, res) => {
   if (!sessionUser(req)) return res.redirect(loginConfigured() ? "/auth/discord" : "/");
   res.sendFile(path.join(ROOT, "views", "logs.html"));
@@ -388,15 +435,16 @@ app.get("/logs", (req, res) => {
 app.get("/api/logs", requireLogin, (req, res) => {
   const type = String(req.query.type || "").trim().toUpperCase();
   const actor = String(req.query.user || "").trim();
-  const entries = logs.filter(entry =>
+  const safeLogs = logs.map(publicLog);
+  const entries = safeLogs.filter(entry =>
     (!type || String(entry.type || "").toUpperCase() === type) &&
-    (!actor || String(entry.actor || "") === actor)
+    (!actor || entry.actor === actor)
   );
   res.json({
     logs: entries,
-    types: [...new Set(logs.map(entry => entry.type).filter(Boolean))].sort(),
-    users: [...new Set(logs.map(entry => entry.actor).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
-    currentUser: `${sessionUser(req).username}${sessionUser(req).email ? " · " + sessionUser(req).email : ""}`
+    types: [...new Set(safeLogs.map(entry => entry.type).filter(Boolean))].sort(),
+    users: [...new Set(safeLogs.map(entry => entry.actor).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    currentUser: sessionUser(req).username
   });
 });
 app.post("/auth/logout", (req, res) => {
@@ -643,7 +691,7 @@ function snapshot() {
   const result = {
     bases: baseList,
     chambers,
-    logs,
+    logs: logs.map(publicLog),
     controllers: controllerClients().length,
     browsers: browserClients().length,
     playerCount: reportedPlayerCount(),
@@ -1119,7 +1167,7 @@ app.post("/api/pull", (req, res) => {
     });
   }
 
-  const actor = `${user.username}${user.email ? ` <${user.email}>` : ""} (${user.id})`;
+  const actor = `${user.username} (${user.id})`;
   const result = executePull(base, chamber, actor);
 
   if (result.error) {
