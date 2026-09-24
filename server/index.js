@@ -47,6 +47,8 @@ const AUTH_COOKIE = "stasis_session";
 const sessions = new Map();
 const oauthStates = new Map();
 const refreshPromises = new WeakMap();
+const roleCheckCache = new Map();
+const roleCheckPromises = new Map();
 
 try {
   const savedSessions = JSON.parse(fs.readFileSync(DISCORD_SESSIONS_FILE, "utf8"));
@@ -145,25 +147,65 @@ async function refreshDiscordToken(session) {
 }
 
 async function userHasRequiredRole(session) {
-  if (!session?.accessToken) return false;
-  await refreshDiscordToken(session);
-  try {
-    const response = await fetch(`https://discord.com/api/v10/users/@me/guilds/${ACCESS_GUILD_ID}/member`, {
-      headers: { Authorization: `Bearer ${session.accessToken}` },
-      signal: AbortSignal.timeout(5000)
-    });
-    if (response.ok) {
-      const member = await response.json();
-      if (Array.isArray(member.roles) && member.roles.includes(REQUIRED_ROLE_ID)) return true;
-    } else {
-      console.warn("[Auth] OAuth guild-member lookup returned HTTP", response.status);
-    }
-  } catch (error) {
-    console.error("[Auth] Guild role check failed:", error.message);
-  }
+  if (!session?.accessToken || !session.user?.id) return false;
+  const userId = String(session.user.id);
+  const now = Date.now();
+  const cached = roleCheckCache.get(userId);
+  if (cached && cached.expiresAt > now) return cached.allowed;
+  if (roleCheckPromises.has(userId)) return roleCheckPromises.get(userId);
 
-  // The bot endpoint is an independent confirmation path for role assignments.
-  return botUserHasRequiredRole(session.user?.id);
+  const check = (async () => {
+    await refreshDiscordToken(session);
+    try {
+      const response = await fetch(`https://discord.com/api/v10/users/@me/guilds/${ACCESS_GUILD_ID}/member`, {
+        headers: { Authorization: `Bearer ${session.accessToken}` },
+        signal: AbortSignal.timeout(5000)
+      });
+      if (response.status === 429) {
+        let retrySeconds = Number(response.headers.get("retry-after")) || 0;
+        const body = await response.json().catch(() => ({}));
+        retrySeconds = Math.max(retrySeconds, Number(body.retry_after) || 0);
+        const retryAt = Date.now() + Math.min(Math.max(retrySeconds, 1), 900) * 1000;
+        const allowed = cached?.allowed === true && cached.staleUntil > Date.now();
+        roleCheckCache.set(userId, {
+          allowed,
+          expiresAt: retryAt,
+          staleUntil: allowed ? cached.staleUntil : retryAt
+        });
+        console.warn(`[Auth] OAuth guild-member lookup rate limited; retrying in ${Math.ceil((retryAt - Date.now()) / 1000)}s`);
+        return allowed;
+      }
+
+      if (!response.ok) {
+        console.warn("[Auth] OAuth guild-member lookup returned HTTP", response.status);
+      } else {
+        const member = await response.json();
+        if (Array.isArray(member.roles) && member.roles.includes(REQUIRED_ROLE_ID)) {
+          roleCheckCache.set(userId, { allowed: true, expiresAt: Date.now() + 5 * 60 * 1000, staleUntil: Date.now() + 30 * 60 * 1000 });
+          return true;
+        }
+      }
+    } catch (error) {
+      console.error("[Auth] OAuth guild role check failed:", error.message);
+    }
+
+    // Use the bot endpoint as a fallback when the user OAuth endpoint cannot confirm the role.
+    const allowed = await botUserHasRequiredRole(userId);
+    const checkedAt = Date.now();
+    roleCheckCache.set(userId, {
+      allowed,
+      expiresAt: checkedAt + (allowed ? 5 * 60 * 1000 : 30 * 1000),
+      staleUntil: checkedAt + (allowed ? 30 * 60 * 1000 : 30 * 1000)
+    });
+    return allowed;
+  })();
+
+  roleCheckPromises.set(userId, check);
+  try {
+    return await check;
+  } finally {
+    roleCheckPromises.delete(userId);
+  }
 }
 
 async function requireGuildRole(req, res, next) {
@@ -1324,7 +1366,8 @@ async function botUserHasRequiredRole(userId) {
       signal: AbortSignal.timeout(5000)
     });
     if (!response.ok) {
-      console.warn("[Auth] Bot guild-member lookup returned HTTP", response.status);
+      console.warn("[Auth] Bot guild-member lookup returned HTTP", response.status,
+        response.status === 404 ? "(check that this bot is in the configured Discord server)" : "");
       return false;
     }
     const member = await response.json();
