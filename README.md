@@ -40,7 +40,9 @@ DISCORD_CLIENT_SECRET=your-discord-client-secret
 DISCORD_REDIRECT_URI=https://YOUR_DOMAIN/auth/discord/callback
 ```
 
-The dashboard uses Discord's `identify` scope. Pull and player configuration actions require a signed-in dashboard session; the server checks this independently of the disabled UI controls. Sessions are held in memory for seven days and are cleared when the server restarts. Dashboard pull activity records the Discord username and ID alongside the Minecraft player and chamber. Bot pulls include the invoking Discord user in the activity log. The latest 50 activity entries are persisted in `data/activity-logs.json` (or under `STASIS_DATA_DIR`).
+The dashboard requests Discord's `identify` and `email` scopes. Discord returns the email through `/users/@me` when available and authorized; the dashboard keeps it in the in-memory session and includes it in new dashboard pull activity entries. Pull and player configuration actions require a signed-in dashboard session; the server checks this independently of the disabled UI controls. Sessions are held in memory for seven days and are cleared when the server restarts. Dashboard pull activity records the Discord username, email, and ID alongside the Minecraft player and chamber. Bot pulls include the invoking Discord user in the activity log. The latest 50 activity entries are persisted in `data/activity-logs.json` (or under `STASIS_DATA_DIR`).
+
+The `/logs` page and `/api/logs` endpoint require a dashboard Discord session. The page supports filtering by activity type and requesting user.
 
 ## Controller registration
 

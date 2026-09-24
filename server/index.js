@@ -340,7 +340,7 @@ app.get("/auth/discord", (req, res) => {
   url.searchParams.set("client_id", DISCORD_CLIENT_ID);
   url.searchParams.set("redirect_uri", DISCORD_REDIRECT_URI);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", "identify");
+  url.searchParams.set("scope", "identify email");
   url.searchParams.set("state", state);
   res.redirect(url.toString());
 });
@@ -363,7 +363,12 @@ app.get("/auth/discord/callback", async (req, res) => {
     const userResponse = await fetch("https://discord.com/api/users/@me", { headers: { Authorization: "Bearer " + token.access_token } });
     if (!userResponse.ok) throw new Error("Discord identity lookup failed");
     const identity = await userResponse.json();
-    const user = { id: String(identity.id), username: identity.global_name || identity.username, avatar: identity.avatar || null };
+    const user = {
+      id: String(identity.id),
+      username: identity.global_name || identity.username,
+      email: typeof identity.email === "string" ? identity.email : null,
+      avatar: identity.avatar || null
+    };
     const sessionToken = crypto.randomBytes(32).toString("hex");
     sessions.set(sessionToken, { user, expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000 });
     const secure = req.secure || req.get("x-forwarded-proto") === "https";
@@ -376,6 +381,24 @@ app.get("/auth/discord/callback", async (req, res) => {
 });
 
 app.get("/api/auth", (req, res) => res.json({ configured: loginConfigured(), user: sessionUser(req) }));
+app.get("/logs", (req, res) => {
+  if (!sessionUser(req)) return res.redirect(loginConfigured() ? "/auth/discord" : "/");
+  res.sendFile(path.join(ROOT, "views", "logs.html"));
+});
+app.get("/api/logs", requireLogin, (req, res) => {
+  const type = String(req.query.type || "").trim().toUpperCase();
+  const actor = String(req.query.user || "").trim();
+  const entries = logs.filter(entry =>
+    (!type || String(entry.type || "").toUpperCase() === type) &&
+    (!actor || String(entry.actor || "") === actor)
+  );
+  res.json({
+    logs: entries,
+    types: [...new Set(logs.map(entry => entry.type).filter(Boolean))].sort(),
+    users: [...new Set(logs.map(entry => entry.actor).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    currentUser: `${sessionUser(req).username}${sessionUser(req).email ? " · " + sessionUser(req).email : ""}`
+  });
+});
 app.post("/auth/logout", (req, res) => {
   const token = parseCookies(req.headers.cookie)[AUTH_COOKIE];
   if (token) sessions.delete(token);
@@ -1096,7 +1119,8 @@ app.post("/api/pull", (req, res) => {
     });
   }
 
-  const result = executePull(base, chamber, `${user.username} (${user.id})`);
+  const actor = `${user.username}${user.email ? ` <${user.email}>` : ""} (${user.id})`;
+  const result = executePull(base, chamber, actor);
 
   if (result.error) {
     return res.status(result.error).json(result.body);

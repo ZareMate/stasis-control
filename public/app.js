@@ -72,7 +72,7 @@ function renderAuth(configured = true) {
   if (!configured) {
     controls.innerHTML = '<span class="auth-error">Discord login is not configured</span>';
   } else if (currentUser) {
-    controls.innerHTML = '<span class="user-name">' + esc(currentUser.username) + '</span><button class="login-button" id="logoutButton">LOG OUT</button>';
+    controls.innerHTML = '<span class="user-name">' + esc(currentUser.username) + (currentUser.email ? ' · ' + esc(currentUser.email) : '') + '</span><button class="login-button" id="logoutButton">LOG OUT</button>';
     $("logoutButton").onclick = async () => {
       await fetch("/auth/logout", { method: "POST" });
       currentUser = null;
