@@ -148,8 +148,10 @@ async function refreshDiscordToken(session) {
 }
 
 async function userHasRequiredRole(session) {
-  if (!session?.accessToken || !session.user?.id) return false;
+  if (!session?.user?.id) return false;
   const userId = String(session.user.id);
+  if (hasRememberedRole(userId)) return true;
+  if (!session.accessToken) return false;
   const now = Date.now();
   const cached = roleCheckCache.get(userId);
   if (cached && cached.expiresAt > now) return cached.allowed;
@@ -183,6 +185,7 @@ async function userHasRequiredRole(session) {
         const member = await response.json();
         if (Array.isArray(member.roles) && member.roles.includes(REQUIRED_ROLE_ID)) {
           roleCheckCache.set(userId, { allowed: true, expiresAt: Date.now() + 5 * 60 * 1000, staleUntil: Date.now() + 30 * 60 * 1000 });
+          rememberVerifiedRole(session.user);
           return true;
         }
       }
@@ -198,6 +201,7 @@ async function userHasRequiredRole(session) {
       expiresAt: checkedAt + (allowed ? 5 * 60 * 1000 : 30 * 1000),
       staleUntil: checkedAt + (allowed ? 30 * 60 * 1000 : 30 * 1000)
     });
+    if (allowed) rememberVerifiedRole(session.user);
     return allowed;
   })();
 
@@ -235,21 +239,41 @@ function loadDiscordUsers() {
 
 let discordUsers = loadDiscordUsers();
 
-function saveDiscordUser(discordProfile, ip) {
-  const id = String(discordProfile.id);
-  const previous = discordUsers[id] || {};
-  const ips = [...new Set([...(previous.ips || []), ip].filter(Boolean))].slice(-20);
-  discordUsers[id] = {
-    discord: discordProfile,
-    ips,
-    createdAt: previous.createdAt || new Date().toISOString(),
-    lastSeenAt: new Date().toISOString()
-  };
+function persistDiscordUsers() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const temporary = DISCORD_USERS_FILE + ".tmp";
   fs.writeFileSync(temporary, JSON.stringify(discordUsers, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
   fs.chmodSync(temporary, 0o600);
   fs.renameSync(temporary, DISCORD_USERS_FILE);
+}
+
+function hasRememberedRole(userId) {
+  return Boolean(discordUsers[String(userId)]?.roleVerifiedAt);
+}
+
+function rememberVerifiedRole(user) {
+  const id = String(user.id);
+  const previous = discordUsers[id] || {};
+  discordUsers[id] = {
+    ...previous,
+    discord: previous.discord || { id, username: user.username || "Unknown" },
+    roleVerifiedAt: previous.roleVerifiedAt || new Date().toISOString()
+  };
+  persistDiscordUsers();
+}
+
+function saveDiscordUser(discordProfile, ip) {
+  const id = String(discordProfile.id);
+  const previous = discordUsers[id] || {};
+  const ips = [...new Set([...(previous.ips || []), ip].filter(Boolean))].slice(-20);
+  discordUsers[id] = {
+    ...previous,
+    discord: discordProfile,
+    ips,
+    createdAt: previous.createdAt || new Date().toISOString(),
+    lastSeenAt: new Date().toISOString()
+  };
+  persistDiscordUsers();
 }
 
 function publicLog(entry) {

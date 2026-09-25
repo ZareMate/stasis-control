@@ -29,7 +29,13 @@ function renderMap() {
     point.style.left = (width / 2 + (player.x - view.x) * view.scale) + "px";
     point.style.top = (height / 2 + (player.z - view.z) * view.scale) + "px";
     point.title = `${player.username}: X ${player.x}, Y ${player.y}, Z ${player.z} (${status})`;
-    point.innerHTML = `<span>${escapeHtml(player.username)}</span>`;
+    const head = document.createElement("img");
+    head.src = `https://mc-heads.net/avatar/${encodeURIComponent(player.username)}/32`;
+    head.alt = "";
+    head.loading = "lazy";
+    const label = document.createElement("span");
+    label.textContent = player.username;
+    point.append(head, label);
     map.append(point);
   }
 }
