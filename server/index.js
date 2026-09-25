@@ -547,6 +547,19 @@ if (!CONTROLLER_TOKEN) {
 }
 
 app.use(express.json({ limit: "32kb" }));
+
+async function sendDashboardPage(req, res) {
+  const session = sessionFor(req);
+  if (!session) return res.redirect(loginConfigured() ? "/auth/discord" : "/access-denied");
+  if (!(await userHasRequiredRole(session))) return res.redirect("/access-denied");
+  res.sendFile(path.join(ROOT, "public", "index.html"));
+}
+
+// Register these before the static middleware so neither / nor /index.html
+// can bypass the remembered Discord-role authorization.
+app.get("/", sendDashboardPage);
+app.get("/index.html", sendDashboardPage);
+app.get("/radar.html", (_req, res) => res.redirect("/radar"));
 app.use(express.static(path.join(ROOT, "public")));
 
 app.get("/auth/discord", (req, res) => {
@@ -601,7 +614,7 @@ app.get("/auth/discord/callback", async (req, res) => {
     res.redirect(await userHasRequiredRole(session) ? "/" : "/access-denied");
   } catch (error) {
     console.error("[Auth] Discord login failed:", error.message);
-    res.redirect("/?login=failed");
+    res.redirect("/access-denied?login=failed");
   }
 });
 
@@ -1629,9 +1642,10 @@ wss.on("connection", async (ws, request) => {
   const queryBase = url.searchParams.get("base");
   const queryName = url.searchParams.get("name");
 
-  // The page is role-protected, and the socket must be too: otherwise a
-  // direct WebSocket client could read radar positions without Discord access.
-  if (role === "radar-browser") {
+  // Browser dashboards are role-protected, and their sockets must be too:
+  // otherwise a direct WebSocket client could read dashboard data without
+  // Discord access.
+  if (role === "browser" || role === "radar-browser") {
     const session = sessionFor(request);
     if (!session || !(await userHasRequiredRole(session))) {
       ws.close(1008, "Discord role required");
@@ -1777,9 +1791,7 @@ wss.on("connection", async (ws, request) => {
   });
 });
 
-app.use((req, res) => {
-  res.sendFile(path.join(ROOT, "public", "index.html"));
-});
+app.use(sendDashboardPage);
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log("Stasis Control running on port " + PORT);
