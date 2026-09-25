@@ -98,7 +98,7 @@ local PROTOCOL = "radar"
 
 -- Web dashboard relay. Use ws:// for a local HTTP server or wss:// for HTTPS.
 -- STASIS_TOKEN must match the value in the web server's .env file.
-local RADAR_WS_URL = "wss://YOUR-STASIS-HOST/ws?role=radar&token=YOUR-STASIS_TOKEN"
+local RADAR_WS_URL = "wss://stasis.suchodupin.com/ws?role=radar&token=YOUR-STASIS_TOKEN"
 local radarWebSocket = nil
 local nextRadarReconnect = 0
 

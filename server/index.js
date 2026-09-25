@@ -592,7 +592,12 @@ app.get("/api/auth", (req, res) => {
   })).catch(() => res.json({ configured: loginConfigured(), user: null, allowed: false }));
 });
 app.get("/access-denied", (_req, res) => res.sendFile(path.join(ROOT, "views", "access-denied.html")));
-app.get("/radar", (_req, res) => res.sendFile(path.join(ROOT, "public", "radar.html")));
+app.get("/radar", async (req, res) => {
+  const session = sessionFor(req);
+  if (!session) return res.redirect(loginConfigured() ? "/auth/discord" : "/");
+  if (!(await userHasRequiredRole(session))) return res.redirect("/access-denied");
+  res.sendFile(path.join(ROOT, "public", "radar.html"));
+});
 app.get("/logs", async (req, res) => {
   const session = sessionFor(req);
   if (!session) return res.redirect(loginConfigured() ? "/auth/discord" : "/");
@@ -1590,7 +1595,7 @@ server.on("upgrade", (request, socket, head) => {
   );
 });
 
-wss.on("connection", (ws, request) => {
+wss.on("connection", async (ws, request) => {
   const url = new URL(request.url, "http://localhost");
 
   debugLog("WebSocket connection:", url.pathname, url.search);
@@ -1599,6 +1604,16 @@ wss.on("connection", (ws, request) => {
   const token = url.searchParams.get("token");
   const queryBase = url.searchParams.get("base");
   const queryName = url.searchParams.get("name");
+
+  // The page is role-protected, and the socket must be too: otherwise a
+  // direct WebSocket client could read radar positions without Discord access.
+  if (role === "radar-browser") {
+    const session = sessionFor(request);
+    if (!session || !(await userHasRequiredRole(session))) {
+      ws.close(1008, "Discord role required");
+      return;
+    }
+  }
 
   if (role === "browser" || role === "radar-browser") {
     const client = {
