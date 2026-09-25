@@ -17,6 +17,7 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
 const clients = new Set();
+const radarReports = new Map();
 const logs = [];
 const pullTimers = new Map();
 
@@ -591,6 +592,7 @@ app.get("/api/auth", (req, res) => {
   })).catch(() => res.json({ configured: loginConfigured(), user: null, allowed: false }));
 });
 app.get("/access-denied", (_req, res) => res.sendFile(path.join(ROOT, "views", "access-denied.html")));
+app.get("/radar", (_req, res) => res.sendFile(path.join(ROOT, "public", "radar.html")));
 app.get("/logs", async (req, res) => {
   const session = sessionFor(req);
   if (!session) return res.redirect(loginConfigured() ? "/auth/discord" : "/");
@@ -642,6 +644,40 @@ function controllerClients() {
 
 function browserClients() {
   return [...clients].filter(client => client.role === "browser");
+}
+
+function radarSnapshot() {
+  const players = new Map();
+  for (const report of radarReports.values()) {
+    for (const player of report.players) {
+      const key = player.username.toLowerCase();
+      const previous = players.get(key);
+      if (!previous || report.updatedAt > previous.updatedAt) players.set(key, { ...player, updatedAt: report.updatedAt });
+    }
+  }
+  const reports = [...radarReports.values()];
+  return {
+    players: [...players.values()].sort((a, b) => a.username.localeCompare(b.username)),
+    updatedAt: reports.length ? reports.reduce((latest, report) => Math.max(latest, report.updatedAt), 0) : null
+  };
+}
+
+function broadcastRadar() {
+  const message = { type: "radar", ...radarSnapshot() };
+  for (const client of clients) if (client.role === "radar-browser") safeSend(client.ws, message);
+}
+
+function processRadarMessage(client, message) {
+  if (message.type !== "radar" || !Array.isArray(message.players)) return;
+  const players = [];
+  for (const row of message.players) {
+    const username = typeof row?.username === "string" ? row.username.trim() : "";
+    const x = Number(row?.x), y = Number(row?.y), z = Number(row?.z);
+    if (!username || username.length > 32 || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+    players.push({ username, x, y, z, status: typeof row.status === "string" ? row.status : "unknown", floor: typeof row.floor === "string" ? row.floor : null, outOfBounds: Boolean(row.outOfBounds) });
+  }
+  radarReports.set(client.id, { players, updatedAt: Date.now() });
+  broadcastRadar();
 }
 
 function addLog(type, chamber, player, detail, base, actor = "") {
@@ -1222,6 +1258,10 @@ app.get("/api/state", (_req, res) => {
   res.json(snapshot());
 });
 
+app.get("/api/radar", (_req, res) => {
+  res.json(radarSnapshot());
+});
+
 app.get("/api/health", (_req, res) => {
   res.json({
     ok: true,
@@ -1560,11 +1600,11 @@ wss.on("connection", (ws, request) => {
   const queryBase = url.searchParams.get("base");
   const queryName = url.searchParams.get("name");
 
-  if (role === "browser") {
+  if (role === "browser" || role === "radar-browser") {
     const client = {
       id: crypto.randomUUID(),
       ws,
-      role: "browser",
+      role,
       base: null,
       baseName: null,
       controllerName: null,
@@ -1572,10 +1612,11 @@ wss.on("connection", (ws, request) => {
     };
 
     clients.add(client);
-    safeSend(ws, {
-      type: "state",
-      state: snapshot()
-    });
+    if (role === "browser") {
+      safeSend(ws, { type: "state", state: snapshot() });
+    } else {
+      safeSend(ws, { type: "radar", ...radarSnapshot() });
+    }
 
     ws.on("close", () => {
       clients.delete(client);
@@ -1603,6 +1644,25 @@ wss.on("connection", (ws, request) => {
     reports: new Map(),
     lastHeartbeat: Date.now()
   };
+
+  if (role === "radar") {
+    client.role = "radar";
+    clients.add(client);
+    ws.on("message", raw => {
+      try {
+        processRadarMessage(client, JSON.parse(raw.toString()));
+      } catch {
+        safeSend(ws, { type: "error", error: "Invalid JSON" });
+      }
+    });
+    ws.on("close", () => {
+      clients.delete(client);
+      radarReports.delete(client.id);
+      broadcastRadar();
+    });
+    ws.on("error", error => console.error("[WS radar] error:", error.message));
+    return;
+  }
 
   setControllerIdentity(client, {
     base: queryBase,

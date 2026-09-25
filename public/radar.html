@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Stasis Radar</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/radar.css">
+</head>
+<body class="radar-page">
+  <header class="topbar">
+    <div><div class="eyebrow">CREATECRAFT NETWORK</div><h1>Live Radar</h1></div>
+    <div class="topbar-actions"><a class="config-button" href="/">CONTROL</a><div class="connection"><span id="dot" class="dot offline"></span><span id="connectionText">Connecting</span></div></div>
+  </header>
+  <main class="radar-main">
+    <section class="radar-heading"><div><span class="eyebrow">PLAYER POSITIONS</span><h2>Area radar</h2></div><div id="radarMeta" class="radar-meta">No signal</div></section>
+    <section class="radar-shell"><div id="radarMap" class="radar-map" aria-label="2D player map"><div class="radar-axis axis-x">X</div><div class="radar-axis axis-z">Z</div><div id="radarEmpty" class="radar-empty">Waiting for radar data…</div></div><aside><h3>Detected players</h3><div id="playerList" class="radar-list"></div></aside></section>
+  </main>
+  <script src="/radar.js"></script>
+</body>
+</html>
