@@ -64,6 +64,7 @@ local USERNAME_LIST = {}
 local nameCache = {}
 local remotePlayers = {}
 local latestRadarData = {}
+local latestSableData = {}
 local latestState = {}
 local radarWebSocket = nil
 local nextRadarReconnect = 0
@@ -219,24 +220,31 @@ end
 
 local function getAllTracks()
     local tracks = {}
-    local seen = {}
+    local sableTracks = {}
+    local seenPlayers = {}
+    local seenSable = {}
 
     for _, radar in ipairs(radarMonitors) do
         local current = radar.getTracks() or {}
         for _, track in ipairs(current) do
-            if track.category == CATEGORY_FILTER then
-                local id = track.id
-                if not id or id == "" or not seen[id] then
-                    if id and id ~= "" then
-                        seen[id] = true
-                    end
+            local category = track.category
+            local id = track.id
+
+            if category == CATEGORY_FILTER then
+                if not id or id == "" or not seenPlayers[id] then
+                    if id and id ~= "" then seenPlayers[id] = true end
                     tracks[#tracks + 1] = track
+                end
+            elseif category == "SABLE" then
+                if not id or id == "" or not seenSable[id] then
+                    if id and id ~= "" then seenSable[id] = true end
+                    sableTracks[#sableTracks + 1] = track
                 end
             end
         end
     end
 
-    return tracks
+    return tracks, sableTracks
 end
 
 local function resolveTracks(tracks)
@@ -414,12 +422,28 @@ local function buildRadarData(players)
     return data
 end
 
+local function buildSableData(tracks)
+    local data = {}
+    for i, track in ipairs(tracks) do
+        local pos = track.position or {}
+        data[i] = {
+            id = type(track.id) == "string" and track.id or nil,
+            category = "SABLE",
+            x = ("%.2f"):format(tonumber(pos.x) or 0),
+            y = ("%.2f"):format(tonumber(pos.y) or 0),
+            z = ("%.2f"):format(tonumber(pos.z) or 0)
+        }
+    end
+    return data
+end
+
 local function publishState(players, flags, tracksCount, loopTimeMs)
     latestRadarData = buildRadarData(players)
 
     latestState = {
         timestamp = os.epoch("utc"),
         players = latestRadarData,
+        sableContraptions = latestSableData,
         tracks = tracksCount,
         flags = flags,
         debug = DEBUG_TIMING and {
@@ -473,6 +497,7 @@ local function websocketLoop()
                     textutils.serialiseJSON({
                         type = "radar",
                         players = latestRadarData,
+                        sableContraptions = latestSableData,
                         timestamp = latestState.timestamp
                     })
                 )
@@ -514,12 +539,19 @@ local function scanLoop()
 
         reloadDatabase(false)
 
-        local tracks = #radarMonitors > 0 and getAllTracks() or {}
+        local tracks, sableTracks
+        if #radarMonitors > 0 then
+            tracks, sableTracks = getAllTracks()
+        else
+            tracks, sableTracks = {}, {}
+        end
+
         local names = resolveTracks(tracks)
         local players, flags = buildLocalPlayers(tracks, names)
 
         mergeRemotePlayers(players)
         sortPlayers(players)
+        latestSableData = buildSableData(sableTracks)
         publishNetwork()
 
         local loopTimeMs = (os.clock() - loopStart) * 1000

@@ -690,38 +690,81 @@ function browserClients() {
 
 function radarSnapshot() {
   const players = new Map();
+  const sableContraptions = new Map();
+
   for (const report of radarReports.values()) {
-    for (const player of report.players) {
+    for (const player of report.players || []) {
       const key = player.username.toLowerCase();
       const previous = players.get(key);
-      if (!previous || report.updatedAt > previous.updatedAt) players.set(key, { ...player, updatedAt: report.updatedAt });
+      if (!previous || report.updatedAt > previous.updatedAt) {
+        players.set(key, { ...player, updatedAt: report.updatedAt });
+      }
+    }
+
+    for (const sable of report.sableContraptions || []) {
+      const key = sable.id
+        ? "id:" + sable.id
+        : "anonymous:" + [sable.x, sable.y, sable.z].join(":");
+      const previous = sableContraptions.get(key);
+      if (!previous || report.updatedAt > previous.updatedAt) {
+        sableContraptions.set(key, { ...sable, updatedAt: report.updatedAt });
+      }
     }
   }
+
   const reports = [...radarReports.values()];
   return {
     players: [...players.values()].sort((a, b) => a.username.localeCompare(b.username)),
-    updatedAt: reports.length ? reports.reduce((latest, report) => Math.max(latest, report.updatedAt), 0) : null
+    sableContraptions: [...sableContraptions.values()].sort((a, b) =>
+      (a.id || "").localeCompare(b.id || "")
+    ),
+    updatedAt: reports.length
+      ? reports.reduce((latest, report) => Math.max(latest, report.updatedAt), 0)
+      : null
   };
 }
 
 function broadcastRadar() {
   const message = { type: "radar", ...radarSnapshot() };
-  for (const client of clients) if (client.role === "radar-browser") safeSend(client.ws, message);
+  for (const client of clients) {
+    if (client.role === "radar-browser") safeSend(client.ws, message);
+  }
 }
 
 function processRadarMessage(client, message) {
-  if (message.type !== "radar" || !Array.isArray(message.players)) return;
+  if (
+    message.type !== "radar" ||
+    (!Array.isArray(message.players) && !Array.isArray(message.sableContraptions))
+  ) return;
+
   const players = [];
-  for (const row of message.players) {
+  for (const row of message.players || []) {
     const username = typeof row?.username === "string" ? row.username.trim() : "";
     const x = Number(row?.x), y = Number(row?.y), z = Number(row?.z);
     if (!username || username.length > 32 || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
-    players.push({ username, x, y, z, status: typeof row.status === "string" ? row.status : "unknown", floor: typeof row.floor === "string" ? row.floor : null, outOfBounds: Boolean(row.outOfBounds) });
+    players.push({
+      username, x, y, z,
+      status: typeof row.status === "string" ? row.status : "unknown",
+      floor: typeof row.floor === "string" ? row.floor : null,
+      outOfBounds: Boolean(row.outOfBounds)
+    });
   }
-  radarReports.set(client.id, { players, updatedAt: Date.now() });
+
+  const sableContraptions = [];
+  for (const row of message.sableContraptions || []) {
+    const id = typeof row?.id === "string" ? row.id.trim() : "";
+    const x = Number(row?.x), y = Number(row?.y), z = Number(row?.z);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+    sableContraptions.push({ id, category: "SABLE", x, y, z });
+  }
+
+  radarReports.set(client.id, {
+    players,
+    sableContraptions,
+    updatedAt: Date.now()
+  });
   broadcastRadar();
 }
-
 function addLog(type, chamber, player, detail, base, actor = "") {
   const entry = {
     time: new Date().toISOString(),
