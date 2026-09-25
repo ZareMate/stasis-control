@@ -235,7 +235,7 @@ local function getAllTracks()
                     if id and id ~= "" then seenPlayers[id] = true end
                     tracks[#tracks + 1] = track
                 end
-            elseif category == "SABLE" then
+            elseif category == "CONTRAPTION" or category == "SABLE" then
                 if not id or id == "" or not seenSable[id] then
                     if id and id ~= "" then seenSable[id] = true end
                     sableTracks[#sableTracks + 1] = track
@@ -429,6 +429,7 @@ local function buildSableData(tracks)
         data[i] = {
             id = type(track.id) == "string" and track.id or nil,
             category = "SABLE",
+            entityType = type(track.entityType) == "string" and track.entityType or nil,
             x = ("%.2f"):format(tonumber(pos.x) or 0),
             y = ("%.2f"):format(tonumber(pos.y) or 0),
             z = ("%.2f"):format(tonumber(pos.z) or 0)
