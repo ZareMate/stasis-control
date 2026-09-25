@@ -5,7 +5,7 @@ const dot = document.getElementById("dot");
 const connection = document.getElementById("connectionText");
 const meta = document.getElementById("radarMeta");
 const coordinates = document.getElementById("radarCoordinates");
-let socket, reconnectTimer, players = [];
+let socket, reconnectTimer, players = [], sableContraptions = [];
 let view = { x: -111, z: 243, scale: 2 };
 let drag = null;
 
@@ -14,7 +14,7 @@ function statusFor(player) { const status = String(player.status || "unknown").t
 function renderMap() {
   const { width, height } = map.getBoundingClientRect();
   if (!width || !height) return;
-  map.querySelectorAll(".radar-player").forEach(node => node.remove());
+  map.querySelectorAll(".radar-player,.radar-sable").forEach(node => node.remove());
   empty.hidden = players.length > 0;
   const grid = Math.max(12, 10 * view.scale);
   const offsetX = width / 2 - ((view.x * view.scale) % grid);
@@ -38,15 +38,29 @@ function renderMap() {
     point.append(head, label);
     map.append(point);
   }
+
+  for (const sable of sableContraptions) {
+    const point = document.createElement("div");
+    point.className = "radar-sable";
+    point.style.left = (width / 2 + (sable.x - view.x) * view.scale) + "px";
+    point.style.top = (height / 2 + (sable.z - view.z) * view.scale) + "px";
+    point.title = "SABLE" + (sable.id ? " " + sable.id : "") +
+      ": X " + sable.x + ", Y " + sable.y + ", Z " + sable.z;
+    const label = document.createElement("span");
+    label.textContent = sable.id ? "SABLE " + sable.id : "SABLE";
+    point.append(label);
+    map.append(point);
+  }
 }
-function render(nextPlayers, updatedAt) {
+function render(nextPlayers, nextSableContraptions, updatedAt) {
   players = nextPlayers;
+  sableContraptions = nextSableContraptions;
   renderMap();
   list.innerHTML = players.length ? players.map(player => {
     const status = statusFor(player);
     return `<div class="radar-row ${status}"><strong><i></i>${escapeHtml(player.username)}</strong><span>${status.toUpperCase()} · X ${Math.round(player.x)} · Y ${Math.round(player.y)} · Z ${Math.round(player.z)}${player.floor ? " · " + escapeHtml(player.floor) : ""}</span></div>`;
   }).join("") : '<div class="empty-log">No players detected.</div>';
-  meta.textContent = `${players.length} player${players.length === 1 ? "" : "s"}${updatedAt ? " · updated " + new Date(updatedAt).toLocaleTimeString() : ""}`;
+  meta.textContent = `${players.length} player${players.length === 1 ? "" : "s"} · ${sableContraptions.length} SABLE${sableContraptions.length === 1 ? "" : "s"}${updatedAt ? " · updated " + new Date(updatedAt).toLocaleTimeString() : ""}`;
 }
 function worldAt(clientX, clientY) { const bounds = map.getBoundingClientRect(); return { x: view.x + (clientX - bounds.left - bounds.width / 2) / view.scale, z: view.z + (clientY - bounds.top - bounds.height / 2) / view.scale }; }
 map.addEventListener("pointerdown", event => { if (event.button !== 0) return; drag = { id: event.pointerId, x: event.clientX, y: event.clientY }; map.setPointerCapture(event.pointerId); map.classList.add("dragging"); });
@@ -57,5 +71,5 @@ map.addEventListener("pointercancel", stopDragging);
 map.addEventListener("wheel", event => { event.preventDefault(); const world = worldAt(event.clientX, event.clientY); view.scale = Math.min(12, Math.max(.15, view.scale * (event.deltaY < 0 ? 1.15 : 1 / 1.15))); const bounds = map.getBoundingClientRect(); view.x = world.x - (event.clientX - bounds.left - bounds.width / 2) / view.scale; view.z = world.z - (event.clientY - bounds.top - bounds.height / 2) / view.scale; renderMap(); }, { passive: false });
 document.getElementById("resetView").addEventListener("click", () => { view = { x: -111, z: 243, scale: 2 }; renderMap(); });
 new ResizeObserver(renderMap).observe(map);
-function connect() { clearTimeout(reconnectTimer); const protocol = location.protocol === "https:" ? "wss" : "ws"; socket = new WebSocket(`${protocol}://${location.host}/ws?role=radar-browser`); socket.onopen = () => { dot.classList.remove("offline"); connection.textContent = "Connected"; }; socket.onclose = () => { dot.classList.add("offline"); connection.textContent = "Disconnected"; reconnectTimer = setTimeout(connect, 2500); }; socket.onmessage = event => { try { const message = JSON.parse(event.data); if (message.type === "radar") render(message.players || [], message.updatedAt); } catch {} }; }
+function connect() { clearTimeout(reconnectTimer); const protocol = location.protocol === "https:" ? "wss" : "ws"; socket = new WebSocket(`${protocol}://${location.host}/ws?role=radar-browser`); socket.onopen = () => { dot.classList.remove("offline"); connection.textContent = "Connected"; }; socket.onclose = () => { dot.classList.add("offline"); connection.textContent = "Disconnected"; reconnectTimer = setTimeout(connect, 2500); }; socket.onmessage = event => { try { const message = JSON.parse(event.data); if (message.type === "radar") render(message.players || [], message.sableContraptions || [], message.updatedAt); } catch {} }; }
 connect();
