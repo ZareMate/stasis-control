@@ -68,6 +68,7 @@ function render(nextPlayers, nextSableContraptions, updatedAt) {
     const number = sable.number || index + 1;
     const name = sable.name || "";
     const id = escapeHtml(sable.id || "");
+    const safeName = escapeHtml(name).replace(/"/g, "&quot;");
     const disabled = sable.id ? "" : " disabled";
     return '<div class="radar-sable-row">' +
       '<div class="radar-sable-info">' +
@@ -76,7 +77,7 @@ function render(nextPlayers, nextSableContraptions, updatedAt) {
       (sable.entityType ? ' · ' + escapeHtml(sable.entityType) : '') + '</span>' +
       '</div>' +
       '<div class="sable-name-edit">' +
-      '<input class="sable-name-input" type="text" maxlength="40" autocomplete="off" placeholder="Custom name" value="' + escapeHtml(name) + '" data-sable-id="' + id + '"' + disabled + '>' +
+      '<input class="sable-name-input" type="text" maxlength="40" autocomplete="off" placeholder="Custom name" value="' + safeName + '" data-sable-id="' + id + '"' + disabled + '>' +
       '<button class="sable-save" type="button" data-sable-id="' + id + '"' + disabled + '>SAVE</button>' +
       '</div>' +
       '<div class="sable-save-status" aria-live="polite"></div>' +
