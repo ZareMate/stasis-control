@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../../../../../run/user/1000/gvfs/smb-share:server=server.local,share=zaremate/stasis-control"
+		},
+		{
+			"name": "Computer 17",
+			"uri": "craftos-pc://0/"
+		}
+	],
+	"settings": {}
+}
