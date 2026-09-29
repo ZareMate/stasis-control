@@ -14,13 +14,12 @@
 local CATEGORY_FILTER = "PLAYER"
 local DATABASE_FILE = "users.json"
 local STATE_FILE = "radar_state.json"
-local PROTOCOL = "radar"
+local RAW_PROTOCOL = "radar_raw"
+local RAW_HOSTNAME = "radar-" .. tostring(os.getComputerID())
 
 local REDNET_SIDE = "bottom"
-local DESTINATION_IDS = { 70 }
 
-local RADAR_WS_URL =
-"wss://stasis.suchodupin.com/ws?role=radar&token=YOUR-STASIS_TOKEN"
+local RADAR_WS_URL = "wss://stasis.suchodupin.com/ws?role=radar&token=YOUR-STASIS_TOKEN"
 
 local RADAR_INTERVAL = 0.10
 local DB_RELOAD_INTERVAL = 1.0
@@ -62,7 +61,9 @@ local rednetEnabled = modem
 
 local USERNAME_LIST = {}
 local nameCache = {}
-local remotePlayers = {}
+-- Local radar data is NEVER populated from rednet.
+-- Remote radar data is kept separately so it can never be rebroadcast.
+local remoteRadarData = {}
 local latestRadarData = {}
 local latestSableData = {}
 local latestState = {}
@@ -182,37 +183,57 @@ local function resolveUsernameFromUUID(uuid)
     return nil
 end
 
-local function acceptRadarMessage(sender, message)
-    if type(message) ~= "table" or type(message.data) ~= "table" then
-        return
+local function sanitizeRawTrack(track)
+    if type(track) ~= "table" then
+        return nil
     end
 
-    local snapshot = {}
-    for _, row in ipairs(message.data) do
-        if type(row) == "table"
-            and type(row.username) == "string"
-            and #row.username > 0
-            and #row.username <= 32 then
-            local x = tonumber(row.x)
-            local y = tonumber(row.y)
-            local z = tonumber(row.z)
+    local position = track.position or {}
+    local x = tonumber(position.x)
+    local y = tonumber(position.y)
+    local z = tonumber(position.z)
 
-            if x and y and z then
-                snapshot[#snapshot + 1] = {
-                    username = row.username,
-                    x = x,
-                    y = y,
-                    z = z,
-                    status = USERNAME_LIST[row.username],
-                    floor = type(row.floor) == "string"
-                        and row.floor or nil,
-                    outOfBounds = not isInsidePlayerSquare(x, z)
-                }
-            end
+    if not x or not y or not z then
+        return nil
+    end
+
+    return {
+        id = type(track.id) == "string" and track.id or nil,
+        category = type(track.category) == "string" and track.category or nil,
+        entityType = type(track.entityType) == "string" and track.entityType or nil,
+        position = { x = x, y = y, z = z }
+    }
+end
+
+local function buildRawTrackList(tracks)
+    local data = {}
+
+    for _, track in ipairs(tracks) do
+        local raw = sanitizeRawTrack(track)
+        if raw then
+            data[#data + 1] = raw
         end
     end
 
-    remotePlayers[sender] = {
+    return data
+end
+
+local function acceptRawRadarMessage(sender, message)
+    if type(message) ~= "table" or type(message.players) ~= "table" then
+        return
+    end
+
+    -- REMOTE ONLY: this data is never included in publishRawNetwork().
+    local snapshot = {}
+
+    for _, track in ipairs(message.players) do
+        local raw = sanitizeRawTrack(track)
+        if raw and raw.category == CATEGORY_FILTER then
+            snapshot[#snapshot + 1] = raw
+        end
+    end
+
+    remoteRadarData[sender] = {
         players = snapshot,
         receivedAt = os.clock()
     }
@@ -336,6 +357,35 @@ local function buildLocalPlayers(tracks, names)
     return players, flags
 end
 
+local function buildRemotePlayers(rawTracks)
+    local players = {}
+    local names = resolveTracks(rawTracks)
+
+    for i, track in ipairs(rawTracks) do
+        local username = names[i]
+
+        if username then
+            local status = USERNAME_LIST[username]
+            local pos = track.position or {}
+            local x = tonumber(pos.x) or 0
+            local y = tonumber(pos.y) or 0
+            local z = tonumber(pos.z) or 0
+
+            players[#players + 1] = {
+                username = username,
+                x = x,
+                y = y,
+                z = z,
+                floor = isWithinFloorSquare(x, z) and getPlayerFloor(y) or nil,
+                status = status,
+                outOfBounds = not isInsidePlayerSquare(x, z)
+            }
+        end
+    end
+
+    return players
+end
+
 local function mergeRemotePlayers(players)
     local detectedNames = {}
 
@@ -345,14 +395,16 @@ local function mergeRemotePlayers(players)
 
     local now = os.clock()
 
-    for sender, remote in pairs(remotePlayers) do
+    for sender, remote in pairs(remoteRadarData) do
         if now - remote.receivedAt > REMOTE_TIMEOUT then
-            remotePlayers[sender] = nil
+            remoteRadarData[sender] = nil
         else
-            for _, player in ipairs(remote.players) do
+            local remotePlayers = buildRemotePlayers(remote.players)
+
+            for _, player in ipairs(remotePlayers) do
                 local key = player.username:lower()
+
                 if not detectedNames[key] then
-                    player.status = USERNAME_LIST[player.username]
                     players[#players + 1] = player
                     detectedNames[key] = true
                 end
@@ -462,13 +514,22 @@ local function publishState(players, flags, tracksCount, loopTimeMs)
     end
 end
 
-local function publishNetwork()
-    if rednetEnabled then
-        for _, destinationID in ipairs(DESTINATION_IDS) do
-            rednet.send(destinationID, {
-                data = latestRadarData,
-                timestamp = os.epoch("utc")
-            }, PROTOCOL)
+local function publishRawNetwork(localTracks)
+    if not rednetEnabled then
+        return
+    end
+
+    local computers = { rednet.lookup(RAW_PROTOCOL) }
+    local payload = {
+        source = os.getComputerID(),
+        timestamp = os.epoch("utc"),
+        players = buildRawTrackList(localTracks)
+    }
+
+    for _, computer in ipairs(computers) do
+        -- Never send back to ourselves.
+        if computer ~= os.getComputerID() then
+            rednet.send(computer, payload, RAW_PROTOCOL)
         end
     end
 end
@@ -524,10 +585,14 @@ local function rednetLoop()
         rednet.open(REDNET_SIDE)
     end
 
+    -- Advertise this computer as a raw radar source.
+    rednet.host(RAW_PROTOCOL, RAW_HOSTNAME)
+
     while not fs.exists("radar_stop") do
-        local sender, message, protocol = rednet.receive(PROTOCOL)
-        if sender and protocol == PROTOCOL then
-            acceptRadarMessage(sender, message)
+        local sender, message, protocol = rednet.receive()
+
+        if sender and protocol == RAW_PROTOCOL then
+            acceptRawRadarMessage(sender, message)
         end
     end
 end
@@ -553,7 +618,9 @@ local function scanLoop()
         mergeRemotePlayers(players)
         sortPlayers(players)
         latestSableData = buildSableData(sableTracks)
-        publishNetwork()
+        -- Only tracks read from THIS computer's wired radar monitors are broadcast.
+        -- Remote tracks stay in remoteRadarData and can never be rebroadcast.
+        publishRawNetwork(tracks)
 
         local loopTimeMs = (os.clock() - loopStart) * 1000
         maxLoopTimeMs = math.max(maxLoopTimeMs, loopTimeMs)
@@ -569,6 +636,8 @@ end
 
 print("RADAR: " .. #radarMonitors .. " radar monitor(s)")
 print(rednetEnabled and "RADAR: rednet enabled" or "RADAR: rednet disabled")
+print("RADAR: raw rednet protocol = " .. RAW_PROTOCOL)
+print("RADAR: raw hostname = " .. RAW_HOSTNAME)
 print("RADAR: scanning every " .. RADAR_INTERVAL .. "s")
 print("RADAR: loop timing debug enabled")
 
