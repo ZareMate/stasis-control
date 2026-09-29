@@ -37,6 +37,7 @@ const PREFERENCES_FILE = path.join(DATA_DIR, "player-preferences.json");
 const LOGS_FILE = path.join(DATA_DIR, "activity-logs.json");
 const DISCORD_USERS_FILE = path.join(DATA_DIR, "discord-users.json");
 const DISCORD_SESSIONS_FILE = path.join(DATA_DIR, "discord-sessions.json");
+const SABLE_NAMES_FILE = path.join(DATA_DIR, "sable-names.json");
 const PULL_API_TOKEN = process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN || "";
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
@@ -290,6 +291,30 @@ function loadPreferences() {
   } catch {
     return {};
   }
+}
+
+function loadSableNames() {
+  try {
+    const value = JSON.parse(fs.readFileSync(SABLE_NAMES_FILE, "utf8"));
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+let sableNames = loadSableNames();
+
+function saveSableNames() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const temporary = SABLE_NAMES_FILE + ".tmp";
+  fs.writeFileSync(temporary, JSON.stringify(sableNames, null, 2) + "\n", "utf8");
+  fs.renameSync(temporary, SABLE_NAMES_FILE);
+}
+
+function sableDisplayName(id) {
+  const key = String(id || "").trim();
+  const value = typeof sableNames[key] === "string" ? sableNames[key].trim() : "";
+  return value || null;
 }
 
 let playerPreferences = loadPreferences();
@@ -713,11 +738,19 @@ function radarSnapshot() {
   }
 
   const reports = [...radarReports.values()];
+  const sortedSables = [...sableContraptions.values()].sort((a, b) =>
+    (a.id || "").localeCompare(b.id || "")
+  );
+
+  const numberedSables = sortedSables.map((sable, index) => ({
+    ...sable,
+    number: index + 1,
+    name: sableDisplayName(sable.id)
+  }));
+
   return {
     players: [...players.values()].sort((a, b) => a.username.localeCompare(b.username)),
-    sableContraptions: [...sableContraptions.values()].sort((a, b) =>
-      (a.id || "").localeCompare(b.id || "")
-    ),
+    sableContraptions: numberedSables,
     updatedAt: reports.length
       ? reports.reduce((latest, report) => Math.max(latest, report.updatedAt), 0)
       : null
@@ -755,7 +788,14 @@ function processRadarMessage(client, message) {
     const id = typeof row?.id === "string" ? row.id.trim() : "";
     const x = Number(row?.x), y = Number(row?.y), z = Number(row?.z);
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
-    sableContraptions.push({ id, category: "SABLE", x, y, z });
+    sableContraptions.push({
+      id,
+      category: "SABLE",
+      x,
+      y,
+      z,
+      entityType: typeof row.entityType === "string" ? row.entityType : null
+    });
   }
 
   radarReports.set(client.id, {
@@ -1345,6 +1385,49 @@ app.get("/api/state", (_req, res) => {
 
 app.get("/api/radar", (_req, res) => {
   res.json(radarSnapshot());
+});
+
+app.get("/api/radar/sable-names", requireLogin, (req, res) => {
+  const names = {};
+  for (const [id, name] of Object.entries(sableNames)) {
+    if (typeof id === "string" && typeof name === "string" && name.trim()) {
+      names[id] = name.trim();
+    }
+  }
+  res.json({ names });
+});
+
+app.post("/api/radar/sable-name", requireLogin, (req, res) => {
+  const id = typeof req.body?.id === "string" ? req.body.id.trim() : "";
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+
+  if (!id || id.length > 128) {
+    return res.status(400).json({ error: "Invalid SABLE id" });
+  }
+
+  if (name.length > 40) {
+    return res.status(400).json({ error: "SABLE name must be 40 characters or fewer" });
+  }
+
+  if (name) {
+    sableNames[id] = name;
+  } else {
+    delete sableNames[id];
+  }
+
+  try {
+    saveSableNames();
+  } catch (error) {
+    console.error("[Radar] Unable to save SABLE names:", error.message);
+    return res.status(500).json({ error: "Unable to save SABLE name" });
+  }
+
+  broadcastRadar();
+  res.json({
+    ok: true,
+    id,
+    name: sableDisplayName(id)
+  });
 });
 
 app.get("/api/health", (_req, res) => {
