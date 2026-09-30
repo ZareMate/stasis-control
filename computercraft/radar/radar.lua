@@ -24,6 +24,9 @@ local RADAR_WS_URL = "wss://stasis.suchodupin.com/ws?role=radar&token=YOUR-STASI
 local RADAR_INTERVAL = 0.10
 local DB_RELOAD_INTERVAL = 1.0
 local REMOTE_TIMEOUT = 10
+local STATE_WRITE_INTERVAL = 0.20
+local REDNET_LOOKUP_INTERVAL = 5
+local USERNAME_LOOKUP_CONCURRENCY = 4
 
 -- Debug timing
 local DEBUG_TIMING = true
@@ -51,6 +54,9 @@ local latestState = {}
 local radarWebSocket = nil
 local nextRadarReconnect = 0
 local lastDatabaseLoad = 0
+local lastStateWrite = 0
+local rawRadarComputers = {}
+local nextRednetLookup = 0
 
 local function loadDatabase()
     if not fs.exists(DATABASE_FILE) then
@@ -80,114 +86,17 @@ local function reloadDatabase(force)
     end
 end
 
-local function resolveUsernameFromUUID(uuid)
-    return usernameHelper.usernameFromUUID(uuid)
-end
-
-local function sanitizeRawTrack(track)
-    if type(track) ~= "table" then
-        return nil
-    end
-
-    local position = track.position or {}
-    local x = tonumber(position.x)
-    local y = tonumber(position.y)
-    local z = tonumber(position.z)
-
-    if not x or not y or not z then
-        return nil
-    end
-
-    return {
-        id = type(track.id) == "string" and track.id or nil,
-        category = type(track.category) == "string" and track.category or nil,
-        entityType = type(track.entityType) == "string" and track.entityType or nil,
-        position = { x = x, y = y, z = z }
-    }
-end
-
-local function buildRawTrackList(tracks)
-    local data = {}
-
-    for _, track in ipairs(tracks) do
-        local raw = sanitizeRawTrack(track)
-        if raw then
-            data[#data + 1] = raw
-        end
-    end
-
-    return data
-end
-
-local function acceptRawRadarMessage(sender, message)
-    if type(message) ~= "table" or type(message.players) ~= "table" then
-        return
-    end
-
-    -- REMOTE ONLY: this data is never included in publishRawNetwork().
-    local snapshot = {}
-
-    for _, track in ipairs(message.players) do
-        local raw = sanitizeRawTrack(track)
-        if raw and raw.category == CATEGORY_FILTER then
-            snapshot[#snapshot + 1] = raw
-        end
-    end
-
-    remoteRadarData[sender] = {
-        players = snapshot,
-        receivedAt = os.clock()
-    }
-end
-
-local function getAllTracks()
-    local tracks = {}
-    local sableTracks = {}
-    local seenPlayers = {}
-    local seenSable = {}
-
-    for _, radar in ipairs(radarMonitors) do
-        local current = radar.getTracks() or {}
-        for _, track in ipairs(current) do
-            local category = track.category
-            local id = track.id
-
-            if category == CATEGORY_FILTER then
-                if not id or id == "" or not seenPlayers[id] then
-                    if id and id ~= "" then seenPlayers[id] = true end
-                    tracks[#tracks + 1] = track
-                end
-            elseif category == "CONTRAPTION" or category == "SABLE" then
-                if not id or id == "" or not seenSable[id] then
-                    if id and id ~= "" then seenSable[id] = true end
-                    sableTracks[#sableTracks + 1] = track
-                end
-            end
-        end
-    end
-
-    return tracks, sableTracks
-end
-
 local function resolveTracks(tracks)
-    -- Resolve uncached UUIDs concurrently. Cached names return immediately.
+    -- Never block the radar scan on HTTP.
+    -- Known names are returned immediately; unknown UUIDs are queued.
     local names = {}
 
-    local function resolveOne(index, track)
-        names[index] = resolveUsernameFromUUID(track.id or "")
-    end
+    for i, track in ipairs(tracks) do
+        local uuid = track.id or ""
+        names[i] = usernameHelper.getCached(uuid)
 
-    if parallel and #tracks > 1 then
-        local jobs = {}
-        for i, track in ipairs(tracks) do
-            jobs[#jobs + 1] = function()
-                resolveOne(i, track)
-            end
-        end
-        parallel.waitForAll(table.unpack(jobs))
-    else
-        for i, track in ipairs(tracks) do
-            resolveOne(i, track)
+        if not names[i] then
+            usernameHelper.queueUUID(uuid)
         end
     end
 
@@ -407,6 +316,15 @@ local function publishState(players, flags, tracksCount, loopTimeMs)
         } or nil
     }
 
+    local now = os.clock()
+
+    -- GUI/redstone do not need a file rewrite every scan.
+    if now - lastStateWrite < STATE_WRITE_INTERVAL then
+        return
+    end
+
+    lastStateWrite = now
+
     local encoded = textutils.serialiseJSON(latestState)
     local file = fs.open(STATE_FILE, "w")
     if file then
@@ -420,14 +338,20 @@ local function publishRawNetwork(localTracks)
         return
     end
 
-    local computers = { rednet.lookup(RAW_PROTOCOL) }
+    local now = os.clock()
+
+    if now >= nextRednetLookup then
+        rawRadarComputers = { rednet.lookup(RAW_PROTOCOL) }
+        nextRednetLookup = now + REDNET_LOOKUP_INTERVAL
+    end
+
     local payload = {
         source = os.getComputerID(),
         timestamp = os.epoch("utc"),
         players = buildRawTrackList(localTracks)
     }
 
-    for _, computer in ipairs(computers) do
+    for _, computer in ipairs(rawRadarComputers) do
         -- Never send back to ourselves.
         if computer ~= os.getComputerID() then
             rednet.send(computer, payload, RAW_PROTOCOL)
@@ -570,6 +494,9 @@ end
 
 parallel.waitForAll(
     function() runWorker("SCAN", scanLoop) end,
+    function() runWorker("USERNAME", function()
+        usernameHelper.worker(USERNAME_LOOKUP_CONCURRENCY)
+    end) end,
     function() runWorker("REDNET", rednetLoop) end,
     function() runWorker("WEBSOCKET", websocketLoop) end
 )
