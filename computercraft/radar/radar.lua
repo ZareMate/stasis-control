@@ -542,6 +542,34 @@ print("RADAR: raw hostname = " .. RAW_HOSTNAME)
 print("RADAR: scanning every " .. RADAR_INTERVAL .. "s")
 print("RADAR: loop timing debug enabled")
 
-pcall(function()
-    parallel.waitForAll(scanLoop, rednetLoop, websocketLoop)
-end)
+local function runWorker(name, worker)
+    while true do
+        local ok, err = pcall(worker)
+
+        if ok then
+            print("RADAR: " .. name .. " stopped")
+            return
+        end
+
+        printError("RADAR: " .. name .. " crashed:")
+        printError(err)
+
+        local file = fs.open("radar_error.log", "a")
+        if file then
+            file.writeLine(
+                os.date("%Y-%m-%d %H:%M:%S")
+                    .. " [" .. name .. "] "
+                    .. tostring(err)
+            )
+            file.close()
+        end
+
+        sleep(1)
+    end
+end
+
+parallel.waitForAll(
+    function() runWorker("SCAN", scanLoop) end,
+    function() runWorker("REDNET", rednetLoop) end,
+    function() runWorker("WEBSOCKET", websocketLoop) end
+)
