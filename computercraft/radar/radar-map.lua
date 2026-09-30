@@ -45,6 +45,7 @@ local DATABASE_FILE = "users.json"
 local REMOTE_TIMEOUT = 10
 
 local usernameHelper = dofile("username_helper.lua")
+local floorHelper = dofile("floor_helper.lua")
 
 local MAP_MONITOR_SCALE = 1
 local GROUP_MONITOR_SCALE = 1
@@ -585,10 +586,199 @@ end
 -- BUILD PLAYER LIST
 -- =========================================================
 
+local USERNAME_LIST = {}
+local lastDatabaseLoad = 0
+
+-- Each sender has its latest raw snapshot.
+-- Remote data is never sent anywhere by this program.
+local remoteRadarData = {}
+
+local function loadDatabase()
+    if not fs.exists(DATABASE_FILE) then
+        return {}
+    end
+
+    local file = fs.open(DATABASE_FILE, "r")
+    if not file then
+        return {}
+    end
+
+    local data =
+        textutils.unserialiseJSON(
+            file.readAll()
+        )
+
+    file.close()
+
+    return type(data) == "table"
+        and data
+        or {}
+end
+
+local function reloadDatabase()
+    local now = os.clock()
+
+    if now - lastDatabaseLoad >= 1 then
+        USERNAME_LIST = loadDatabase()
+        lastDatabaseLoad = now
+    end
+end
+
+local function sanitizeRawTrack(track)
+    if type(track) ~= "table"
+        or track.category ~= "PLAYER"
+    then
+        return nil
+    end
+
+    local uuid =
+        type(track.id) == "string"
+        and track.id
+        or nil
+
+    local position =
+        track.position or {}
+
+    local x = tonumber(position.x)
+    local y = tonumber(position.y)
+    local z = tonumber(position.z)
+
+    if not uuid
+        or uuid == ""
+        or not x
+        or not y
+        or not z
+    then
+        return nil
+    end
+
+    return {
+        id = uuid,
+        entityType =
+            type(track.entityType) == "string"
+            and track.entityType
+            or nil,
+        x = x,
+        y = y,
+        z = z
+    }
+end
+
+local function acceptRadarRawPacket(
+    senderID,
+    message
+)
+    if type(message) ~= "table"
+        or type(message.players) ~= "table"
+    then
+        return false
+    end
+
+    local timestamp =
+        tonumber(message.timestamp)
+        or os.epoch("utc")
+
+    local previous =
+        remoteRadarData[senderID]
+
+    -- Ignore an older packet arriving after a newer one.
+    if previous
+        and timestamp < previous.timestamp
+    then
+        return false
+    end
+
+    local players = {}
+
+    for _, track
+        in ipairs(message.players)
+    do
+        local raw =
+            sanitizeRawTrack(track)
+
+        if raw then
+            players[#players + 1] = raw
+        end
+    end
+
+    remoteRadarData[senderID] = {
+        timestamp = timestamp,
+        receivedAt = os.clock(),
+        source =
+            tonumber(message.source)
+            or senderID,
+        players = players
+    }
+
+    return true
+end
+
+local function cleanupRadarSources()
+    local now = os.clock()
+
+    for senderID, source
+        in pairs(remoteRadarData)
+    do
+        if now - source.receivedAt
+            > REMOTE_TIMEOUT
+        then
+            remoteRadarData[senderID] = nil
+        end
+    end
+end
+
+local function mergeRawPlayers()
+    -- One entry per UUID. When several radar computers see
+    -- the same player, keep the newest observation.
+    local merged = {}
+
+    for _, source
+        in pairs(remoteRadarData)
+    do
+        for _, track
+            in ipairs(source.players)
+        do
+            local uuid = track.id
+            local previous = merged[uuid]
+
+            if not previous
+                or source.timestamp
+                    > previous.timestamp
+                or (
+                    source.timestamp
+                        == previous.timestamp
+                    and source.receivedAt
+                        > previous.receivedAt
+                )
+            then
+                merged[uuid] = {
+                    id = uuid,
+                    entityType =
+                        track.entityType,
+                    x = track.x,
+                    y = track.y,
+                    z = track.z,
+                    timestamp =
+                        source.timestamp
+                }
+            end
+        end
+    end
+
+    local players = {}
+
+    for _, player
+        in pairs(merged)
+    do
+        players[#players + 1] = player
+    end
+
+    return players
+end
+
 local function buildPlayerList(
     radarData
 )
-
     reloadDatabase()
 
     local players = {}
@@ -596,12 +786,12 @@ local function buildPlayerList(
     for i, rawPlayer
         in ipairs(radarData)
     do
-
         if type(rawPlayer) == "table" then
 
             local x = tonumber(rawPlayer.x)
             local y = tonumber(rawPlayer.y)
             local z = tonumber(rawPlayer.z)
+
             local uuid =
                 type(rawPlayer.id) == "string"
                 and rawPlayer.id
@@ -610,10 +800,14 @@ local function buildPlayerList(
             if x and y and z and uuid then
 
                 local username =
-                    usernameHelper.getCached(uuid)
+                    usernameHelper.getCached(
+                        uuid
+                    )
 
                 if not username then
-                    usernameHelper.queueUUID(uuid)
+                    usernameHelper.queueUUID(
+                        uuid
+                    )
                 end
 
                 local displayName =
@@ -626,18 +820,37 @@ local function buildPlayerList(
                     or nil
 
                 local inside =
-                    isInsideServerSquare(x, z)
+                    isInsideServerSquare(
+                        x,
+                        z
+                    )
+
+                local floor =
+                    nil
+
+                if inside then
+                    floor =
+                        floorHelper.getPlayerFloor(
+                            y
+                        )
+                end
 
                 players[#players + 1] = {
                     uuid = uuid,
-                    username = tostring(displayName),
+                    username = tostring(
+                        displayName
+                    ),
                     x = x,
                     y = y,
                     z = z,
                     status = status,
-                    floor = nil,
+                    floor = floor,
                     outOfBounds = not inside,
-                    distance = getDistanceSquared(x, z)
+                    distance =
+                        getDistanceSquared(
+                            x,
+                            z
+                        )
                 }
             end
         end
@@ -654,24 +867,19 @@ local function buildPlayerList(
             if a.outOfBounds
                 ~= b.outOfBounds
             then
-
                 return not a.outOfBounds
             end
-
 
             if a.outOfBounds
                 and b.outOfBounds
             then
-
                 if a.distance
                     ~= b.distance
                 then
-
                     return a.distance
                         < b.distance
                 end
             end
-
 
             local priorityA =
                 getStatusPriority(
@@ -683,26 +891,19 @@ local function buildPlayerList(
                     b.status
                 )
 
-
             if priorityA
                 ~= priorityB
             then
-
                 return priorityA
                     < priorityB
             end
-
 
             return a.username:lower()
                 < b.username:lower()
         end
     )
 
-
     return players
-    return players
-end
-
 end
 
 
@@ -2358,7 +2559,6 @@ print(
 )
 
 
--- =========================================================
 -- =========================================================
 -- MAIN LOOP
 -- =========================================================
