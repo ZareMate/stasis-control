@@ -28,40 +28,10 @@ if not http then
     error("HTTP API is not enabled; it is needed to resolve player UUIDs")
 end
 
-local usernameCache = {}
+local usernameHelper = dofile("username_helper.lua")
 
 local function usernameFromUUID(uuid)
-    if type(uuid) ~= "string" or uuid == "" then
-        return nil
-    end
-    if usernameCache[uuid] ~= nil then
-        return usernameCache[uuid] or nil
-    end
-
-    local response = http.get(
-        "https://playerdb.co/api/player/minecraft/" .. uuid
-    )
-    if not response then
-        usernameCache[uuid] = false
-        return nil
-    end
-
-    local body = response.readAll()
-    response.close()
-    local ok, data = pcall(textutils.unserialiseJSON, body)
-    local username = ok
-        and type(data) == "table"
-        and data.data
-        and data.data.player
-        and data.data.player.username
-
-    if type(username) == "string" and username ~= "" then
-        usernameCache[uuid] = username
-        return username
-    end
-
-    usernameCache[uuid] = false
-    return nil
+    return usernameHelper.usernameFromUUID(uuid)
 end
 
 local function collectPlayers()
