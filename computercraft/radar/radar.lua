@@ -31,27 +31,8 @@ local maxLoopTimeMs = 0
 local avgLoopTimeMs = 0
 local loopSamples = 0
 
-local SQUARE_CENTER_X = -111
-local SQUARE_CENTER_Z = 243
-local SQUARE_HALF_SIZE = 100
-local SQUARE_X1 = SQUARE_CENTER_X - SQUARE_HALF_SIZE
-local SQUARE_X2 = SQUARE_CENTER_X + SQUARE_HALF_SIZE
-local SQUARE_Z1 = SQUARE_CENTER_Z - SQUARE_HALF_SIZE
-local SQUARE_Z2 = SQUARE_CENTER_Z + SQUARE_HALF_SIZE
-
-local FLOOR_HALF_SIZE = 50
-local FLOOR_X1 = SQUARE_CENTER_X - FLOOR_HALF_SIZE
-local FLOOR_X2 = SQUARE_CENTER_X + FLOOR_HALF_SIZE
-local FLOOR_Z1 = SQUARE_CENTER_Z - FLOOR_HALF_SIZE
-local FLOOR_Z2 = SQUARE_CENTER_Z + FLOOR_HALF_SIZE
-
-local REDSTONE_DETECTION_AREA = { -99, 70, 250, -96, 72, 247 }
-local ALLY_RELAY_AREAS = {
-    REDSTONE_DETECTION_AREA,
-    { -103, 78, 253, -97, 71, 250 }
-}
-local MAIN_DOOR_OPEN_AREA = { -98, 70, 245, -97, 72, 248 }
-local PORTAL_DOOR_OPEN_AREA = { -96, 69, 239, -94, 71, 238 }
+local areaHelper = dofile("area_helper.lua")
+local floorHelper = dofile("floor_helper.lua")
 
 local radarMonitors = { peripheral.find("create_radar:monitor") }
 local modem = peripheral.wrap(REDNET_SIDE)
@@ -60,7 +41,7 @@ local rednetEnabled = modem
     and modem.isWireless()
 
 local USERNAME_LIST = {}
-local nameCache = {}
+local usernameHelper = dofile("username_helper.lua")
 -- Local radar data is NEVER populated from rednet.
 -- Remote radar data is kept separately so it can never be rebroadcast.
 local remoteRadarData = {}
@@ -99,88 +80,8 @@ local function reloadDatabase(force)
     end
 end
 
-local function isInsideArea(area, x, y, z)
-    local minX = math.min(area[1], area[4])
-    local maxX = math.max(area[1], area[4])
-    local minY = math.min(area[2], area[5])
-    local maxY = math.max(area[2], area[5])
-    local minZ = math.min(area[3], area[6])
-    local maxZ = math.max(area[3], area[6])
-    return x >= minX and x <= maxX
-        and y >= minY and y <= maxY
-        and z >= minZ and z <= maxZ
-end
-
-local function isInsidePlayerSquare(x, z)
-    return x >= SQUARE_X1 and x <= SQUARE_X2
-        and z >= SQUARE_Z1 and z <= SQUARE_Z2
-end
-
-local function isWithinFloorSquare(x, z)
-    return x >= FLOOR_X1 and x <= FLOOR_X2
-        and z >= FLOOR_Z1 and z <= FLOOR_Z2
-end
-
-local function isInsideAnyAllyRelayArea(x, y, z)
-    for _, area in ipairs(ALLY_RELAY_AREAS) do
-        if isInsideArea(area, x, y, z) then
-            return true
-        end
-    end
-    return false
-end
-
-local function getPlayerFloor(y)
-    if y >= 68 and y <= 71 then
-        return "TOP"
-    elseif y >= 56 and y <= 64 then
-        return "PWR"
-    elseif y >= 38 and y <= 46 then
-        return "NWF"
-    elseif y >= 29 and y <= 33 then
-        return "SRV"
-    elseif y >= 22 and y <= 27 then
-        return "MAIN"
-    elseif y >= 12 and y <= 18 then
-        return "MCH"
-    elseif y >= -11 and y <= -7 then
-        return "LAVA"
-    elseif y < -20 then
-        return "MINE"
-    end
-    return nil
-end
-
 local function resolveUsernameFromUUID(uuid)
-    if not uuid or uuid == "" or not http then return nil end
-    if nameCache[uuid] ~= nil then
-        return nameCache[uuid] or nil
-    end
-
-    local ok, result = pcall(function()
-        local res = http.get(
-            "https://playerdb.co/api/player/minecraft/" .. uuid
-        )
-        if not res then return nil end
-
-        local body = res.readAll()
-        res.close()
-
-        local data = textutils.unserialiseJSON(body)
-        if type(data) ~= "table" then return nil end
-
-        return data.data
-            and data.data.player
-            and data.data.player.username
-    end)
-
-    if ok and type(result) == "string" and result ~= "" then
-        nameCache[uuid] = result
-        return result
-    end
-
-    nameCache[uuid] = false
-    return nil
+    return usernameHelper.usernameFromUUID(uuid)
 end
 
 local function sanitizeRawTrack(track)
@@ -313,12 +214,12 @@ local function buildLocalPlayers(tracks, names)
             local y = pos.y or 0
             local z = pos.z or 0
 
-            if status == "enemy" and isInsidePlayerSquare(x, z) then
+            if status == "enemy" and areaHelper.isInsidePlayerSquare(x, z) then
                 flags.speakerMatched = true
             end
 
             if (status == "enemy" or status == nil)
-                and isInsideArea(REDSTONE_DETECTION_AREA, x, y, z) then
+                and areaHelper.isInsideArea(areaHelper.AREAS.REDSTONE_DETECTION, x, y, z) then
                 flags.redstoneMatched = true
                 if status == "enemy" then
                     flags.lockdownMainDoor = true
@@ -326,17 +227,17 @@ local function buildLocalPlayers(tracks, names)
             end
 
             if status == "team" then
-                if isInsideArea(MAIN_DOOR_OPEN_AREA, x, y, z) then
+                if areaHelper.isInsideArea(areaHelper.AREAS.MAIN_DOOR_OPEN, x, y, z) then
                     flags.mainDoorOpen = true
-                elseif isInsideArea(REDSTONE_DETECTION_AREA, x, y, z) then
+                elseif areaHelper.isInsideArea(areaHelper.AREAS.REDSTONE_DETECTION, x, y, z) then
                     flags.mainDoorOpen = true
-                elseif isInsideArea(PORTAL_DOOR_OPEN_AREA, x, y, z) then
+                elseif areaHelper.isInsideArea(areaHelper.AREAS.PORTAL_DOOR_OPEN, x, y, z) then
                     flags.portalDoorOpen = true
                 end
             end
 
             if (status == "ally" or status == "team")
-                and isInsideAnyAllyRelayArea(x, y, z) then
+                and areaHelper.isInsideAnyAllyRelayArea(x, y, z) then
                 flags.allyRelayMatched = true
             end
 
@@ -345,11 +246,11 @@ local function buildLocalPlayers(tracks, names)
                 x = x,
                 y = y,
                 z = z,
-                floor = isWithinFloorSquare(x, z)
-                    and getPlayerFloor(y)
+                floor = areaHelper.isInsideFloorSquare(x, z)
+                    and floorHelper.getPlayerFloor(y)
                     or nil,
                 status = status,
-                outOfBounds = not isInsidePlayerSquare(x, z)
+                outOfBounds = not areaHelper.isInsidePlayerSquare(x, z)
             }
         end
     end
@@ -376,9 +277,9 @@ local function buildRemotePlayers(rawTracks)
                 x = x,
                 y = y,
                 z = z,
-                floor = isWithinFloorSquare(x, z) and getPlayerFloor(y) or nil,
+                floor = areaHelper.isInsideFloorSquare(x, z) and floorHelper.getPlayerFloor(y) or nil,
                 status = status,
-                outOfBounds = not isInsidePlayerSquare(x, z)
+                outOfBounds = not areaHelper.isInsidePlayerSquare(x, z)
             }
         end
     end
