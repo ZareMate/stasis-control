@@ -334,10 +334,10 @@ local function sortPlayers(players)
         end
 
         if a.outOfBounds and b.outOfBounds then
-            local dxA = a.x - SQUARE_CENTER_X
-            local dzA = a.z - SQUARE_CENTER_Z
-            local dxB = b.x - SQUARE_CENTER_X
-            local dzB = b.z - SQUARE_CENTER_Z
+            local dxA = a.x - areaHelper.SQUARE_CENTER_X
+            local dzA = a.z - areaHelper.SQUARE_CENTER_Z
+            local dxB = b.x - areaHelper.SQUARE_CENTER_X
+            local dzB = b.z - areaHelper.SQUARE_CENTER_Z
             local distanceA = dxA * dxA + dzA * dzA
             local distanceB = dxB * dxB + dzB * dzB
 
