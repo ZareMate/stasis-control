@@ -45,6 +45,7 @@ local DATABASE_FILE = "users.json"
 local REMOTE_TIMEOUT = 10
 
 local usernameHelper = dofile("username_helper.lua")
+local areaHelper = dofile("area_helper.lua")
 local floorHelper = dofile("floor_helper.lua")
 
 local MAP_MONITOR_SCALE = 1
@@ -547,36 +548,28 @@ end
 
 
 -- =========================================================
--- SERVER AREA CHECK
+-- SERVER AREA / DISTANCE HELPERS
 -- =========================================================
 
 local function isInsideServerSquare(
     x,
     z
 )
-
-    return x >= SERVER_SQUARE_X1
-        and x <= SERVER_SQUARE_X2
-        and z >= SERVER_SQUARE_Z1
-        and z <= SERVER_SQUARE_Z2
+    return areaHelper.isInsidePlayerSquare(
+        x,
+        z
+    )
 end
-
-
--- =========================================================
--- DISTANCE FROM SERVER CENTER
--- =========================================================
 
 local function getDistanceSquared(
     x,
     z
 )
-
     local dx =
-        x - SERVER_SQUARE_CENTER_X
+        x - areaHelper.SQUARE_CENTER_X
 
     local dz =
-        z - SERVER_SQUARE_CENTER_Z
-
+        z - areaHelper.SQUARE_CENTER_Z
 
     return dx * dx + dz * dz
 end
@@ -828,7 +821,10 @@ local function buildPlayerList(
                 local floor =
                     nil
 
-                if inside then
+                if areaHelper.isInsideFloorSquare(
+                    x,
+                    z
+                ) then
                     floor =
                         floorHelper.getPlayerFloor(
                             y
