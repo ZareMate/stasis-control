@@ -80,26 +80,6 @@ local function reloadDatabase(force)
     end
 end
 
-local function isInsideArea(area, x, y, z)
-    return areaHelper.isInsideArea(area, x, y, z)
-end
-
-local function isInsidePlayerSquare(x, z)
-    return areaHelper.isInsidePlayerSquare(x, z)
-end
-
-local function isWithinFloorSquare(x, z)
-    return areaHelper.isInsideFloorSquare(x, z)
-end
-
-local function isInsideAnyAllyRelayArea(x, y, z)
-    return areaHelper.isInsideAnyAllyRelayArea(x, y, z)
-end
-
-local function getPlayerFloor(y)
-    return floorHelper.getPlayerFloor(y)
-end
-
 local function resolveUsernameFromUUID(uuid)
     return usernameHelper.usernameFromUUID(uuid)
 end
@@ -234,12 +214,12 @@ local function buildLocalPlayers(tracks, names)
             local y = pos.y or 0
             local z = pos.z or 0
 
-            if status == "enemy" and isInsidePlayerSquare(x, z) then
+            if status == "enemy" and areaHelper.isInsidePlayerSquare(x, z) then
                 flags.speakerMatched = true
             end
 
             if (status == "enemy" or status == nil)
-                and isInsideArea(areaHelper.AREAS.REDSTONE_DETECTION, x, y, z) then
+                and areaHelper.isInsideArea(areaHelper.AREAS.REDSTONE_DETECTION, x, y, z) then
                 flags.redstoneMatched = true
                 if status == "enemy" then
                     flags.lockdownMainDoor = true
@@ -247,17 +227,17 @@ local function buildLocalPlayers(tracks, names)
             end
 
             if status == "team" then
-                if isInsideArea(areaHelper.AREAS.MAIN_DOOR_OPEN, x, y, z) then
+                if areaHelper.isInsideArea(areaHelper.AREAS.MAIN_DOOR_OPEN, x, y, z) then
                     flags.mainDoorOpen = true
-                elseif isInsideArea(areaHelper.AREAS.REDSTONE_DETECTION, x, y, z) then
+                elseif areaHelper.isInsideArea(areaHelper.AREAS.REDSTONE_DETECTION, x, y, z) then
                     flags.mainDoorOpen = true
-                elseif isInsideArea(areaHelper.AREAS.PORTAL_DOOR_OPEN, x, y, z) then
+                elseif areaHelper.isInsideArea(areaHelper.AREAS.PORTAL_DOOR_OPEN, x, y, z) then
                     flags.portalDoorOpen = true
                 end
             end
 
             if (status == "ally" or status == "team")
-                and isInsideAnyAllyRelayArea(x, y, z) then
+                and areaHelper.isInsideAnyAllyRelayArea(x, y, z) then
                 flags.allyRelayMatched = true
             end
 
@@ -266,11 +246,11 @@ local function buildLocalPlayers(tracks, names)
                 x = x,
                 y = y,
                 z = z,
-                floor = isWithinFloorSquare(x, z)
-                    and getPlayerFloor(y)
+                floor = areaHelper.isInsideFloorSquare(x, z)
+                    and floorHelper.getPlayerFloor(y)
                     or nil,
                 status = status,
-                outOfBounds = not isInsidePlayerSquare(x, z)
+                outOfBounds = not areaHelper.isInsidePlayerSquare(x, z)
             }
         end
     end
@@ -297,9 +277,9 @@ local function buildRemotePlayers(rawTracks)
                 x = x,
                 y = y,
                 z = z,
-                floor = isWithinFloorSquare(x, z) and getPlayerFloor(y) or nil,
+                floor = areaHelper.isInsideFloorSquare(x, z) and floorHelper.getPlayerFloor(y) or nil,
                 status = status,
-                outOfBounds = not isInsidePlayerSquare(x, z)
+                outOfBounds = not areaHelper.isInsidePlayerSquare(x, z)
             }
         end
     end
