@@ -11,6 +11,7 @@ local tabs = {
     {path = "radar.lua", title = "RADAR"},
     {path = "gui.lua", title = "GUI"},
     {path = "redstone.lua", title = "REDSTONE"},
+    {path = "airlock.lua", title = "AIRLOCK"},
 }
 
 for _, app in ipairs(tabs) do
