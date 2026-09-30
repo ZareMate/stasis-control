@@ -92,55 +92,105 @@ local function requestStop()
     error("Terminated")
 end
 
+local listMenu = dofile("list_menu.lua")
+
 local function statusMenu(username, currentStatus)
-    local options = {
-        {name = "Enemy", value = "enemy", color = colors.red},
-        {name = "Ally", value = "ally", color = colors.blue},
-        {name = "Team", value = "team", color = colors.green},
-        {name = "Unknown", value = nil, color = colors.yellow},
-        {name = "Remove Player", value = "remove", color = colors.red},
-        {name = "Back", value = "back", color = colors.white}
-    }
+    listMenu.open({
+        wrap = true,
+        firstLine = 8,
+        onTerminate = requestStop,
+        onBack = function() end,
+        header = function(width)
+            term.setCursorPos(1, 1)
+            term.setTextColor(colors.white)
+            print("===============================")
+            print("         PLAYER STATUS         ")
+            print("===============================")
+            print("")
+            print("Player: " .. username)
+            print("Current: " .. getStatusName(currentStatus))
+            print("")
+            return 8
+        end,
+        footer = function(_, height)
+            term.setCursorPos(1, height)
+            term.setTextColor(colors.lightGray)
+            term.write("Up/Down: Navigate   Enter: Select")
 
-    local selected = 1
+            if height > 1 then
+                term.setCursorPos(1, height - 1)
+                term.write("Backspace: Back   C: Terminate")
+            end
+        end,
+        items = {
+            {
+                name = "Enemy",
+                color = colors.red,
+                onConfirm = function()
+                    local oldStatus = USERNAME_LIST[username]
+                    USERNAME_LIST[username] = "enemy"
 
-    while true do
-        term.clear()
-        term.setCursorPos(1, 1)
-        print("===============================")
-        print("         PLAYER STATUS         ")
-        print("===============================")
-        print("")
-        print("Player: " .. username)
-        print("Current: " .. getStatusName(currentStatus))
-        print("")
+                    if saveDatabase() then
+                        currentStatus = "enemy"
+                        return false
+                    end
 
-        for i, option in ipairs(options) do
-            drawMenuItem(i + 5, option.name, i == selected, option.color)
-        end
+                    USERNAME_LIST[username] = oldStatus
+                    return false
+                end
+            },
+            {
+                name = "Ally",
+                color = colors.blue,
+                onConfirm = function()
+                    local oldStatus = USERNAME_LIST[username]
+                    USERNAME_LIST[username] = "ally"
 
-        term.setCursorPos(1, #options + 8)
-        term.setTextColor(colors.lightGray)
-        term.write("Arrow keys: Navigate   Enter: Select")
+                    if saveDatabase() then
+                        currentStatus = "ally"
+                        return false
+                    end
 
-        term.setCursorPos(1, #options + 9)
-        term.write("Esc: Back   C: Terminate")
+                    USERNAME_LIST[username] = oldStatus
+                    return false
+                end
+            },
+            {
+                name = "Team",
+                color = colors.green,
+                onConfirm = function()
+                    local oldStatus = USERNAME_LIST[username]
+                    USERNAME_LIST[username] = "team"
 
-        local event, key = os.pullEvent()
+                    if saveDatabase() then
+                        currentStatus = "team"
+                        return false
+                    end
 
-        if event == "key" then
-            if key == keys.c then
-                requestStop()
-            elseif key == keys.up then
-                selected = selected > 1 and selected - 1 or #options
-            elseif key == keys.down then
-                selected = selected < #options and selected + 1 or 1
-            elseif key == keys.enter then
-                local option = options[selected]
+                    USERNAME_LIST[username] = oldStatus
+                    return false
+                end
+            },
+            {
+                name = "Unknown",
+                color = colors.yellow,
+                onConfirm = function()
+                    local oldStatus = USERNAME_LIST[username]
+                    USERNAME_LIST[username] = nil
 
-                if option.value == "back" then
-                    return
-                elseif option.value == "remove" then
+                    if saveDatabase() then
+                        currentStatus = nil
+                        return false
+                    end
+
+                    USERNAME_LIST[username] = oldStatus
+                    return false
+                end
+            },
+            {
+                name = "Remove Player",
+                color = colors.red,
+                onConfirm = function()
                     term.clear()
                     term.setCursorPos(1, 1)
                     print("Remove " .. username .. "?")
@@ -150,6 +200,7 @@ local function statusMenu(username, currentStatus)
 
                     while true do
                         local _, confirmKey = os.pullEvent("key")
+
                         if confirmKey == keys.c then
                             requestStop()
                         elseif confirmKey == keys.y then
@@ -158,34 +209,15 @@ local function statusMenu(username, currentStatus)
                             print("")
                             print("Player removed.")
                             sleep(1)
-                            return
+                            return true
                         else
-                            return
+                            return false
                         end
                     end
-                else
-                    local oldStatus = USERNAME_LIST[username]
-                    USERNAME_LIST[username] = option.value
-
-                    if saveDatabase() then
-                        currentStatus = option.value
-                        term.setCursorPos(1, #options + 11)
-                        term.setTextColor(colors.lime)
-                        print("Status saved.")
-                        sleep(0.7)
-                    else
-                        USERNAME_LIST[username] = oldStatus
-                        term.setCursorPos(1, #options + 11)
-                        term.setTextColor(colors.red)
-                        print("Failed to save status.")
-                        sleep(1)
-                    end
                 end
-            elseif key == keys.backspace then
-                return
-            end
-        end
-    end
+            }
+        }
+    })
 end
 
 local function addPlayer()
@@ -210,76 +242,95 @@ local function addPlayer()
         return
     end
 
-    local options = {
-        {name = "Enemy", value = "enemy", color = colors.red},
-        {name = "Ally", value = "ally", color = colors.blue},
-        {name = "Team", value = "team", color = colors.green},
-        {name = "Unknown", value = "unknown", color = colors.yellow}
-    }
+    listMenu.open({
+        wrap = true,
+        firstLine = 6,
+        onTerminate = requestStop,
+        onBack = function() end,
+        header = function()
+            term.setCursorPos(1, 1)
+            term.setTextColor(colors.white)
+            print("===============================")
+            print("         PLAYER STATUS         ")
+            print("===============================")
+            print("")
+            print("Player: " .. username)
+            print("")
+            return 6
+        end,
+        items = {
+            {
+                name = "Enemy",
+                color = colors.red,
+                onConfirm = function()
+                    USERNAME_LIST[username] = "enemy"
 
-    local selected = 1
+                    if saveDatabase() then
+                        print("")
+                        print("Player added.")
+                    else
+                        USERNAME_LIST[username] = nil
+                        print("")
+                        print("Failed to save player.")
+                    end
 
-    while true do
-        term.clear()
-        term.setCursorPos(1, 1)
-        print("===============================")
-        print("         PLAYER STATUS         ")
-        print("===============================")
-        print("")
-        print("Player: " .. username)
-        print("")
+                    sleep(1)
+                    return true
+                end
+            },
+            {
+                name = "Ally",
+                color = colors.blue,
+                onConfirm = function()
+                    USERNAME_LIST[username] = "ally"
 
-        for i, option in ipairs(options) do
-            drawMenuItem(i + 5, option.name, i == selected, option.color)
-        end
+                    if saveDatabase() then
+                        print("")
+                        print("Player added.")
+                    else
+                        USERNAME_LIST[username] = nil
+                        print("")
+                        print("Failed to save player.")
+                    end
 
-        term.setCursorPos(1, 11)
-        term.setTextColor(colors.lightGray)
-        term.write("Arrow keys: Navigate   Enter: Select")
+                    sleep(1)
+                    return true
+                end
+            },
+            {
+                name = "Team",
+                color = colors.green,
+                onConfirm = function()
+                    USERNAME_LIST[username] = "team"
 
-        term.setCursorPos(1, 12)
-        term.write("Esc: Cancel   C: Terminate")
+                    if saveDatabase() then
+                        print("")
+                        print("Player added.")
+                    else
+                        USERNAME_LIST[username] = nil
+                        print("")
+                        print("Failed to save player.")
+                    end
 
-        local event, key = os.pullEvent()
-
-        if event == "key" then
-            if key == keys.c then
-                requestStop()
-            elseif key == keys.up then
-                selected = selected > 1 and selected - 1 or #options
-            elseif key == keys.down then
-                selected = selected < #options and selected + 1 or 1
-            elseif key == keys.enter then
-                local option = options[selected]
-
-                if option.value == "unknown" then
+                    sleep(1)
+                    return true
+                end
+            },
+            {
+                name = "Unknown",
+                color = colors.yellow,
+                onConfirm = function()
                     print("")
                     print("Unknown players are not stored.")
                     sleep(1)
-                    return
+                    return true
                 end
-
-                USERNAME_LIST[username] = option.value
-
-                if saveDatabase() then
-                    print("")
-                    print("Player added.")
-                else
-                    USERNAME_LIST[username] = nil
-                    print("")
-                    print("Failed to save player.")
-                end
-
-                sleep(1)
-                return
-            elseif key == keys.backspace then
-                return
-            end
-        end
-    end
+            }
+        }
+    })
 end
 
-local function getPlayerList()
+local function getPlayerMenuItems()
     local players = {}
 
     for username, status in pairs(USERNAME_LIST) do
@@ -293,113 +344,57 @@ local function getPlayerList()
         return a.username:lower() < b.username:lower()
     end)
 
-    players[#players + 1] = {
-        username = "Add Player",
-        status = "add"
+    local items = {}
+
+    for _, player in ipairs(players) do
+        items[#items + 1] = {
+            name = function()
+                return player.username
+                    .. " ["
+                    .. getStatusName(player.status)
+                    .. "]"
+            end,
+            color = function()
+                return getPlayerColor(player.status)
+            end,
+            onConfirm = function()
+                statusMenu(player.username, player.status)
+                return false
+            end
+        }
+    end
+
+    items[#items + 1] = {
+        name = "Add Player",
+        color = colors.lime,
+        onConfirm = function()
+            addPlayer()
+            return false
+        end
     }
 
-    return players
+    return items
 end
 
 local function playerMenu()
-    local selected = 1
-    local scrollOffset = 0
-
-    while true do
-        USERNAME_LIST = loadDatabase()
-
-        local playerList = getPlayerList()
-        local width, height = term.getSize()
-        local firstLine = 3
-        local lastLine = height - 2
-        local visibleCount = math.max(1, lastLine - firstLine + 1)
-
-        if selected - scrollOffset > visibleCount then
-            scrollOffset = selected - visibleCount
-        elseif selected - scrollOffset < 1 then
-            scrollOffset = selected - 1
-        end
-
-        local maxScroll = math.max(0, #playerList - visibleCount)
-        scrollOffset = math.min(scrollOffset, maxScroll)
-
-        term.clear()
-        term.setCursorPos(1, 1)
-        term.setTextColor(colors.white)
-        term.write("Player Management")
-
-        for i = 1, visibleCount do
-            local index = i + scrollOffset
-
-            if index <= #playerList then
-                local player = playerList[index]
-                local status = player.status
-                local text
-                local color
-
-                if player.status == "add" then
-                    text = "Add Player"
-                    color = colors.lime
-                else
-                    text = player.username
-                        .. " ["
-                        .. getStatusName(status)
-                        .. "]"
-                    color = getPlayerColor(status)
-                end
-
-                drawMenuItem(
-                    firstLine + i - 1,
-                    text,
-                    index == selected,
-                    color
-                )
-            end
-        end
-
-        if scrollOffset > 0 then
-            term.setCursorPos(width, firstLine)
+    listMenu.open({
+        wrap = false,
+        firstLine = 3,
+        onTerminate = requestStop,
+        onBack = function()
             term.setTextColor(colors.white)
-            term.write("^")
-        end
-
-        if scrollOffset < maxScroll then
-            term.setCursorPos(width, lastLine)
+        end,
+        header = function()
+            term.setCursorPos(1, 1)
             term.setTextColor(colors.white)
-            term.write("v")
+            term.write("Player Management")
+            return 3
+        end,
+        items = function()
+            USERNAME_LIST = loadDatabase()
+            return getPlayerMenuItems()
         end
-
-        term.setCursorPos(1, height)
-        term.setTextColor(colors.lightGray)
-        term.write("Up/Down: Navigate  Enter: Select  Backspace: Back")
-
-        local event, key = os.pullEvent()
-
-        if event == "key" then
-            if key == keys.c then
-                requestStop()
-            elseif key == keys.up then
-                if selected > 1 then
-                    selected = selected - 1
-                end
-            elseif key == keys.down then
-                if selected < #playerList then
-                    selected = selected + 1
-                end
-            elseif key == keys.enter then
-                local player = playerList[selected]
-
-                if player.status == "add" then
-                    addPlayer()
-                else
-                    statusMenu(player.username, player.status)
-                end
-            elseif key == keys.backspace then
-                term.setTextColor(colors.white)
-                return
-            end
-        end
-    end
+    })
 end
 
 local function formatPlayer(player)
