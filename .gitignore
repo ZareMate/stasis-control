@@ -8,3 +8,4 @@ data/discord-users.json
 data/discord-sessions.json
 models/
 whisper.cpp/
+stasis-control.code-workspace
