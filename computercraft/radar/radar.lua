@@ -86,6 +86,103 @@ local function reloadDatabase(force)
     end
 end
 
+local function sanitizeRawTrack(track)
+    if type(track) ~= "table" then
+        return nil
+    end
+
+    local position = track.position or {}
+    local x = tonumber(position.x)
+    local y = tonumber(position.y)
+    local z = tonumber(position.z)
+
+    if not x or not y or not z then
+        return nil
+    end
+
+    return {
+        id = type(track.id) == "string" and track.id or nil,
+        category = type(track.category) == "string" and track.category or nil,
+        entityType = type(track.entityType) == "string" and track.entityType or nil,
+        position = { x = x, y = y, z = z }
+    }
+end
+
+local function buildRawTrackList(tracks)
+    local data = {}
+
+    for _, track in ipairs(tracks) do
+        local raw = sanitizeRawTrack(track)
+
+        if raw then
+            data[#data + 1] = raw
+        end
+    end
+
+    return data
+end
+
+local function acceptRawRadarMessage(sender, message)
+    if type(message) ~= "table"
+        or type(message.players) ~= "table" then
+        return
+    end
+
+    -- REMOTE ONLY: this data is never included in publishRawNetwork().
+    local snapshot = {}
+
+    for _, track in ipairs(message.players) do
+        local raw = sanitizeRawTrack(track)
+
+        if raw and raw.category == CATEGORY_FILTER then
+            snapshot[#snapshot + 1] = raw
+        end
+    end
+
+    remoteRadarData[sender] = {
+        players = snapshot,
+        receivedAt = os.clock()
+    }
+end
+
+local function getAllTracks()
+    local tracks = {}
+    local sableTracks = {}
+    local seenPlayers = {}
+    local seenSable = {}
+
+    for _, radar in ipairs(radarMonitors) do
+        local current = radar.getTracks() or {}
+
+        for _, track in ipairs(current) do
+            local category = track.category
+            local id = track.id
+
+            if category == CATEGORY_FILTER then
+                if not id or id == "" or not seenPlayers[id] then
+                    if id and id ~= "" then
+                        seenPlayers[id] = true
+                    end
+
+                    tracks[#tracks + 1] = track
+                end
+            elseif category == "CONTRAPTION"
+                or category == "SABLE" then
+
+                if not id or id == "" or not seenSable[id] then
+                    if id and id ~= "" then
+                        seenSable[id] = true
+                    end
+
+                    sableTracks[#sableTracks + 1] = track
+                end
+            end
+        end
+    end
+
+    return tracks, sableTracks
+end
+
 local function resolveTracks(tracks)
     -- Never block the radar scan on HTTP.
     -- Known names are returned immediately; unknown UUIDs are queued.
