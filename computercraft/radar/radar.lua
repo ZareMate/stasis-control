@@ -397,7 +397,7 @@ local function buildSableData(tracks)
     return data
 end
 
-local function publishState(players, flags, tracksCount, loopTimeMs)
+local function publishState(players, flags, tracksCount, loopTimeMs, phases)
     latestRadarData = buildRadarData(players)
 
     latestState = {
@@ -409,7 +409,8 @@ local function publishState(players, flags, tracksCount, loopTimeMs)
         debug = DEBUG_TIMING and {
             loopTimeMs = loopTimeMs,
             avgLoopTimeMs = avgLoopTimeMs,
-            maxLoopTimeMs = maxLoopTimeMs
+            maxLoopTimeMs = maxLoopTimeMs,
+            phases = phases
         } or nil
     }
 
@@ -524,25 +525,46 @@ local function scanLoop()
 
     while not fs.exists("radar_stop") do
         local loopStart = os.clock()
+        local phaseStart = loopStart
+        local phases = {}
 
         reloadDatabase(false)
+        phases.databaseMs = (os.clock() - phaseStart) * 1000
 
+        phaseStart = os.clock()
         local tracks, sableTracks
         if #radarMonitors > 0 then
             tracks, sableTracks = getAllTracks()
         else
             tracks, sableTracks = {}, {}
         end
+        phases.getTracksMs = (os.clock() - phaseStart) * 1000
 
+        phaseStart = os.clock()
         local names = resolveTracks(tracks)
-        local players, flags = buildLocalPlayers(tracks, names)
+        phases.usernameQueueMs = (os.clock() - phaseStart) * 1000
 
+        phaseStart = os.clock()
+        local players, flags = buildLocalPlayers(tracks, names)
+        phases.localBuildMs = (os.clock() - phaseStart) * 1000
+
+        phaseStart = os.clock()
         mergeRemotePlayers(players)
+        phases.remoteMergeMs = (os.clock() - phaseStart) * 1000
+
+        phaseStart = os.clock()
         sortPlayers(players)
+        phases.sortMs = (os.clock() - phaseStart) * 1000
+
+        phaseStart = os.clock()
         latestSableData = buildSableData(sableTracks)
+        phases.sableMs = (os.clock() - phaseStart) * 1000
+
+        phaseStart = os.clock()
         -- Only tracks read from THIS computer's wired radar monitors are broadcast.
         -- Remote tracks stay in remoteRadarData and can never be rebroadcast.
         publishRawNetwork(tracks)
+        phases.rawNetworkMs = (os.clock() - phaseStart) * 1000
 
         local loopTimeMs = (os.clock() - loopStart) * 1000
         maxLoopTimeMs = math.max(maxLoopTimeMs, loopTimeMs)
@@ -550,7 +572,7 @@ local function scanLoop()
         avgLoopTimeMs =
             avgLoopTimeMs + (loopTimeMs - avgLoopTimeMs) / loopSamples
 
-        publishState(players, flags, #tracks, loopTimeMs)
+        publishState(players, flags, #tracks, loopTimeMs, phases)
 
         sleep(RADAR_INTERVAL)
     end
