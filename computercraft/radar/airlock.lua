@@ -23,14 +23,14 @@ local floorHelper = dofile("floor_helper.lua")
 local AIRLOCK_AREAS = {
     {
         name = "AREA_1",
-        x1 = -87,
+        x1 = -98,
         z1 = 244,
         x2 = -93,
         z2 = 242
     },
     {
         name = "AREA_2",
-        x1 = -98,
+        x1 = -87,
         z1 = 244,
         x2 = -93,
         z2 = 242
