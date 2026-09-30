@@ -13,6 +13,7 @@
 
 local STATE_FILE = "radar_state.json"
 local INTERVAL = 0.05
+local OFF_DELAY = 1.0
 
 local floorHelper = dofile("floor_helper.lua")
 
@@ -165,6 +166,7 @@ end
 -- =========================================================
 
 local lastActive = {}
+local lastSeen = {}
 
 local function setRelayOutput(relay, side, value)
     if relay then
@@ -173,6 +175,8 @@ local function setRelayOutput(relay, side, value)
 end
 
 local function applyState(active)
+    local now = os.clock()
+
     for _, floor in ipairs(FLOOR_ORDER) do
         local relay = relays[floor]
         local floorActive = active[floor] or {}
@@ -182,8 +186,29 @@ local function applyState(active)
             [2] = false
         }
 
+        lastSeen[floor] = lastSeen[floor] or {
+            [1] = 0,
+            [2] = 0
+        }
+
         for areaIndex = 1, #AIRLOCK_AREAS do
-            local value = floorActive[areaIndex] == true
+            local detected = floorActive[areaIndex] == true
+
+            if detected then
+                -- Open immediately when a TEAM player is detected.
+                lastSeen[floor][areaIndex] = now
+            end
+
+            local value = detected
+
+            if not detected
+                and lastActive[floor][areaIndex]
+                and (now - lastSeen[floor][areaIndex]) < OFF_DELAY then
+                -- Keep the airlock open briefly after the player disappears
+                -- from the radar area. This prevents position updates while
+                -- moving from making the relay rapidly open/close.
+                value = true
+            end
 
             if value ~= lastActive[floor][areaIndex] then
                 setRelayOutput(
