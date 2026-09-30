@@ -73,6 +73,10 @@ function M.isInsideArea(area, x, y, z)
         and z >= minZ and z <= maxZ
 end
 
+function M.isInsideNamedArea(name, x, y, z)
+    return M.isInsideArea(M.AREAS[name], x, y, z)
+end
+
 function M.isInsidePlayerSquare(x, z)
     return x >= SQUARE_CENTER_X - SQUARE_HALF_SIZE
         and x <= SQUARE_CENTER_X + SQUARE_HALF_SIZE
