@@ -14,7 +14,6 @@
 local STATE_FILE = "radar_state.json"
 local INTERVAL = 0.05
 
-local areaHelper = dofile("area_helper.lua")
 local floorHelper = dofile("floor_helper.lua")
 
 -- =========================================================
@@ -38,26 +37,43 @@ local AIRLOCK_AREAS = {
     }
 }
 
--- Uses the existing radar floor relays.
--- Change the peripheral name if an airlock has its own relay.
+-- Each floor has two dedicated relays:
+--   first  = AREA_1
+--   second = AREA_2
 --
--- left  = AIRLOCK_AREAS[1]
--- right = AIRLOCK_AREAS[2]
+-- Both relays use their FRONT output.
 local FLOOR_RELAYS = {
-    TOP = "redstone_relay_52",
-    PWR = "redstone_relay_42",
-    NWF = "redstone_relay_43",
-    SRV = "redstone_relay_44",
-    MAIN = "redstone_relay_45",
-    MCH = "redstone_relay_46",
-    LAVA = "redstone_relay_47",
-    MINE = "redstone_relay_48"
+    TOP = {
+        [1] = "redstone_relay_85",
+        [2] = "redstone_relay_86"
+    },
+    PWR = {
+        [1] = "redstone_relay_69",
+        [2] = "redstone_relay_70"
+    },
+    NWF = {
+        [1] = "redstone_relay_77",
+        [2] = "redstone_relay_78"
+    },
+    SRV = {
+        [1] = "redstone_relay_75",
+        [2] = "redstone_relay_76"
+    },
+    MAIN = {
+        [1] = "redstone_relay_73",
+        [2] = "redstone_relay_74"
+    },
+    MCH = {
+        [1] = "redstone_relay_71",
+        [2] = "redstone_relay_72"
+    },
+    LAVA = {
+        [1] = "redstone_relay_59",
+        [2] = "redstone_relay_60"
+    }
 }
 
-local AREA_OUTPUT_SIDES = {
-    [1] = "left",
-    [2] = "right"
-}
+local AIRLOCK_OUTPUT_SIDE = "front"
 
 local FLOOR_ORDER = {
     "TOP",
@@ -66,8 +82,7 @@ local FLOOR_ORDER = {
     "SRV",
     "MAIN",
     "MCH",
-    "LAVA",
-    "MINE"
+    "LAVA"
 }
 
 -- =========================================================
@@ -77,17 +92,20 @@ local FLOOR_ORDER = {
 local relays = {}
 
 for _, floor in ipairs(FLOOR_ORDER) do
-    local peripheralName = FLOOR_RELAYS[floor]
+    relays[floor] = {
+        [1] = peripheral.wrap(FLOOR_RELAYS[floor][1]),
+        [2] = peripheral.wrap(FLOOR_RELAYS[floor][2])
+    }
 
-    if peripheralName then
-        relays[floor] = peripheral.wrap(peripheralName)
-
-        if not relays[floor] then
+    for areaIndex = 1, 2 do
+        if not relays[floor][areaIndex] then
             printError(
                 "AIRLOCK: missing relay " ..
-                peripheralName ..
+                FLOOR_RELAYS[floor][areaIndex] ..
                 " for " ..
-                floor
+                floor ..
+                " area " ..
+                areaIndex
             )
         end
     end
@@ -169,8 +187,8 @@ local function applyState(active)
 
             if value ~= lastActive[floor][areaIndex] then
                 setRelayOutput(
-                    relay,
-                    AREA_OUTPUT_SIDES[areaIndex],
+                    relay[areaIndex],
+                    AIRLOCK_OUTPUT_SIDE,
                     value
                 )
 
@@ -187,8 +205,8 @@ local function cleanup()
         if relay then
             for areaIndex = 1, #AIRLOCK_AREAS do
                 setRelayOutput(
-                    relay,
-                    AREA_OUTPUT_SIDES[areaIndex],
+                    relay[areaIndex],
+                    AIRLOCK_OUTPUT_SIDE,
                     false
                 )
             end
