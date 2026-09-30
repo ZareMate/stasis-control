@@ -581,6 +581,24 @@ local function drawTerminal(state)
             debug.avgLoopTimeMs or 0,
             debug.maxLoopTimeMs or 0
         ))
+
+        local phases = debug.phases
+        if phases then
+            print(string.format(
+                "Tracks: %.1f | Names: %.1f | Build: %.1f | Remote: %.1f",
+                phases.getTracksMs or 0,
+                phases.usernameQueueMs or 0,
+                phases.localBuildMs or 0,
+                phases.remoteMergeMs or 0
+            ))
+            print(string.format(
+                "Sort: %.1f | SABLE: %.1f | Rednet: %.1f | DB: %.1f",
+                phases.sortMs or 0,
+                phases.sableMs or 0,
+                phases.rawNetworkMs or 0,
+                phases.databaseMs or 0
+            ))
+        end
     end
 
     print("")
