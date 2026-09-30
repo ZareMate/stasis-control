@@ -31,27 +31,8 @@ local maxLoopTimeMs = 0
 local avgLoopTimeMs = 0
 local loopSamples = 0
 
-local SQUARE_CENTER_X = -111
-local SQUARE_CENTER_Z = 243
-local SQUARE_HALF_SIZE = 100
-local SQUARE_X1 = SQUARE_CENTER_X - SQUARE_HALF_SIZE
-local SQUARE_X2 = SQUARE_CENTER_X + SQUARE_HALF_SIZE
-local SQUARE_Z1 = SQUARE_CENTER_Z - SQUARE_HALF_SIZE
-local SQUARE_Z2 = SQUARE_CENTER_Z + SQUARE_HALF_SIZE
-
-local FLOOR_HALF_SIZE = 50
-local FLOOR_X1 = SQUARE_CENTER_X - FLOOR_HALF_SIZE
-local FLOOR_X2 = SQUARE_CENTER_X + FLOOR_HALF_SIZE
-local FLOOR_Z1 = SQUARE_CENTER_Z - FLOOR_HALF_SIZE
-local FLOOR_Z2 = SQUARE_CENTER_Z + FLOOR_HALF_SIZE
-
-local REDSTONE_DETECTION_AREA = { -99, 70, 250, -96, 72, 247 }
-local ALLY_RELAY_AREAS = {
-    REDSTONE_DETECTION_AREA,
-    { -103, 78, 253, -97, 71, 250 }
-}
-local MAIN_DOOR_OPEN_AREA = { -98, 70, 245, -97, 72, 248 }
-local PORTAL_DOOR_OPEN_AREA = { -96, 69, 239, -94, 71, 238 }
+local areaHelper = dofile("area_helper.lua")
+local floorHelper = dofile("floor_helper.lua")
 
 local radarMonitors = { peripheral.find("create_radar:monitor") }
 local modem = peripheral.wrap(REDNET_SIDE)
@@ -100,55 +81,23 @@ local function reloadDatabase(force)
 end
 
 local function isInsideArea(area, x, y, z)
-    local minX = math.min(area[1], area[4])
-    local maxX = math.max(area[1], area[4])
-    local minY = math.min(area[2], area[5])
-    local maxY = math.max(area[2], area[5])
-    local minZ = math.min(area[3], area[6])
-    local maxZ = math.max(area[3], area[6])
-    return x >= minX and x <= maxX
-        and y >= minY and y <= maxY
-        and z >= minZ and z <= maxZ
+    return areaHelper.isInsideArea(area, x, y, z)
 end
 
 local function isInsidePlayerSquare(x, z)
-    return x >= SQUARE_X1 and x <= SQUARE_X2
-        and z >= SQUARE_Z1 and z <= SQUARE_Z2
+    return areaHelper.isInsidePlayerSquare(x, z)
 end
 
 local function isWithinFloorSquare(x, z)
-    return x >= FLOOR_X1 and x <= FLOOR_X2
-        and z >= FLOOR_Z1 and z <= FLOOR_Z2
+    return areaHelper.isInsideFloorSquare(x, z)
 end
 
 local function isInsideAnyAllyRelayArea(x, y, z)
-    for _, area in ipairs(ALLY_RELAY_AREAS) do
-        if isInsideArea(area, x, y, z) then
-            return true
-        end
-    end
-    return false
+    return areaHelper.isInsideAnyAllyRelayArea(x, y, z)
 end
 
 local function getPlayerFloor(y)
-    if y >= 68 and y <= 71 then
-        return "TOP"
-    elseif y >= 56 and y <= 64 then
-        return "PWR"
-    elseif y >= 38 and y <= 46 then
-        return "NWF"
-    elseif y >= 29 and y <= 33 then
-        return "SRV"
-    elseif y >= 22 and y <= 27 then
-        return "MAIN"
-    elseif y >= 12 and y <= 18 then
-        return "MCH"
-    elseif y >= -11 and y <= -7 then
-        return "LAVA"
-    elseif y < -20 then
-        return "MINE"
-    end
-    return nil
+    return floorHelper.getPlayerFloor(y)
 end
 
 local function resolveUsernameFromUUID(uuid)
@@ -290,7 +239,7 @@ local function buildLocalPlayers(tracks, names)
             end
 
             if (status == "enemy" or status == nil)
-                and isInsideArea(REDSTONE_DETECTION_AREA, x, y, z) then
+                and isInsideArea(areaHelper.AREAS.REDSTONE_DETECTION, x, y, z) then
                 flags.redstoneMatched = true
                 if status == "enemy" then
                     flags.lockdownMainDoor = true
@@ -298,11 +247,11 @@ local function buildLocalPlayers(tracks, names)
             end
 
             if status == "team" then
-                if isInsideArea(MAIN_DOOR_OPEN_AREA, x, y, z) then
+                if isInsideArea(areaHelper.AREAS.MAIN_DOOR_OPEN, x, y, z) then
                     flags.mainDoorOpen = true
-                elseif isInsideArea(REDSTONE_DETECTION_AREA, x, y, z) then
+                elseif isInsideArea(areaHelper.AREAS.REDSTONE_DETECTION, x, y, z) then
                     flags.mainDoorOpen = true
-                elseif isInsideArea(PORTAL_DOOR_OPEN_AREA, x, y, z) then
+                elseif isInsideArea(areaHelper.AREAS.PORTAL_DOOR_OPEN, x, y, z) then
                     flags.portalDoorOpen = true
                 end
             end
