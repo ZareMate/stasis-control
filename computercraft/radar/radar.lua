@@ -60,7 +60,7 @@ local rednetEnabled = modem
     and modem.isWireless()
 
 local USERNAME_LIST = {}
-local nameCache = {}
+local usernameHelper = dofile("username_helper.lua")
 -- Local radar data is NEVER populated from rednet.
 -- Remote radar data is kept separately so it can never be rebroadcast.
 local remoteRadarData = {}
@@ -152,35 +152,7 @@ local function getPlayerFloor(y)
 end
 
 local function resolveUsernameFromUUID(uuid)
-    if not uuid or uuid == "" or not http then return nil end
-    if nameCache[uuid] ~= nil then
-        return nameCache[uuid] or nil
-    end
-
-    local ok, result = pcall(function()
-        local res = http.get(
-            "https://playerdb.co/api/player/minecraft/" .. uuid
-        )
-        if not res then return nil end
-
-        local body = res.readAll()
-        res.close()
-
-        local data = textutils.unserialiseJSON(body)
-        if type(data) ~= "table" then return nil end
-
-        return data.data
-            and data.data.player
-            and data.data.player.username
-    end)
-
-    if ok and type(result) == "string" and result ~= "" then
-        nameCache[uuid] = result
-        return result
-    end
-
-    nameCache[uuid] = false
-    return nil
+    return usernameHelper.usernameFromUUID(uuid)
 end
 
 local function sanitizeRawTrack(track)
