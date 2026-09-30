@@ -512,7 +512,9 @@ local function rednetLoop()
     rednet.host(RAW_PROTOCOL, RAW_HOSTNAME)
 
     while not fs.exists("radar_stop") do
-        local sender, message, protocol = rednet.receive()
+        -- Use a timeout so radar_stop can shut this worker down.
+        local sender, message, protocol =
+            rednet.receive(RAW_PROTOCOL, 0.5)
 
         if sender and protocol == RAW_PROTOCOL then
             acceptRawRadarMessage(sender, message)
