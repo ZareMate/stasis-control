@@ -38,7 +38,13 @@
 -- =========================================================
 sleep(1)
 local REDNET_SIDE = "left"
-local PROTOCOL = "radar"
+local PROTOCOL = "radar_raw"
+local RAW_HOSTNAME = "radar-map-" .. tostring(os.getComputerID())
+
+local DATABASE_FILE = "users.json"
+local REMOTE_TIMEOUT = 10
+
+local usernameHelper = dofile("username_helper.lua")
 
 local MAP_MONITOR_SCALE = 1
 local GROUP_MONITOR_SCALE = 1
@@ -474,6 +480,14 @@ if not rednet.isOpen(
     )
 end
 
+-- Advertise this computer as a radar_raw consumer.
+-- We only receive radar_raw packets and never rebroadcast them.
+rednet.host(
+    PROTOCOL,
+    RAW_HOSTNAME
+)
+
+
 
 -- =========================================================
 -- STATUS COLORS
@@ -575,69 +589,59 @@ local function buildPlayerList(
     radarData
 )
 
+    reloadDatabase()
+
     local players = {}
 
-
-    for i, player
+    for i, rawPlayer
         in ipairs(radarData)
     do
 
-        if type(player) == "table" then
+        if type(rawPlayer) == "table" then
 
-            local x =
-                tonumber(player.x)
+            local x = tonumber(rawPlayer.x)
+            local y = tonumber(rawPlayer.y)
+            local z = tonumber(rawPlayer.z)
+            local uuid =
+                type(rawPlayer.id) == "string"
+                and rawPlayer.id
+                or nil
 
-            local y =
-                tonumber(player.y)
+            if x and y and z and uuid then
 
-            local z =
-                tonumber(player.z)
+                local username =
+                    usernameHelper.getCached(uuid)
 
+                if not username then
+                    usernameHelper.queueUUID(uuid)
+                end
 
-            if x and y and z then
+                local displayName =
+                    username
+                    or ("Player " .. i)
+
+                local status =
+                    username
+                    and USERNAME_LIST[username]
+                    or nil
 
                 local inside =
-                    isInsideServerSquare(
-                        x,
-                        z
-                    )
+                    isInsideServerSquare(x, z)
 
-
-                players[
-                    #players + 1
-                ] = {
-
-                    username = tostring(
-                        player.username
-                        or (
-                            "Player "
-                            .. i
-                        )
-                    ),
-
+                players[#players + 1] = {
+                    uuid = uuid,
+                    username = tostring(displayName),
                     x = x,
                     y = y,
                     z = z,
-
-                    status =
-                        player.status,
-
-                    floor =
-                        player.floor,
-
-                    outOfBounds =
-                        not inside,
-
-                    distance =
-                        getDistanceSquared(
-                            x,
-                            z
-                        )
+                    status = status,
+                    floor = nil,
+                    outOfBounds = not inside,
+                    distance = getDistanceSquared(x, z)
                 }
             end
         end
     end
-
 
     -- =====================================================
     -- SORT
@@ -696,6 +700,9 @@ local function buildPlayerList(
 
 
     return players
+    return players
+end
+
 end
 
 
@@ -2352,61 +2359,60 @@ print(
 
 
 -- =========================================================
+-- =========================================================
 -- MAIN LOOP
 -- =========================================================
 
 local lastPlayers = {}
 
-
 drawMap(
     lastPlayers
 )
 
+print("")
+print("RADAR MAP: ready for radar_raw packets")
+print("RADAR MAP: hosting as " .. RAW_HOSTNAME)
+print("RADAR MAP: received data is merged by UUID")
+print("RADAR MAP: received data is never rebroadcast")
 
-while true do
+parallel.waitForAll(
+    function()
+        -- Receive only. This program never calls rednet.send().
+        while true do
+            local senderID, message, protocol =
+                rednet.receive(PROTOCOL)
 
-    local senderID,
-        message,
-        protocol =
-        rednet.receive(
-            PROTOCOL
-        )
+            if senderID
+                and protocol == PROTOCOL
+            then
+                if acceptRadarRawPacket(
+                    senderID,
+                    message
+                ) then
+                    cleanupRadarSources()
 
+                    local players =
+                        buildPlayerList(
+                            mergeRawPlayers()
+                        )
 
-    if protocol == PROTOCOL then
+                    lastPlayers = players
 
-        if type(message) == "table"
-            and type(message.data) == "table"
-        then
+                    drawMap(
+                        players
+                    )
 
-            local players =
-                buildPlayerList(
-                    message.data
-                )
-
-
-            lastPlayers =
-                players
-
-
-            -- =================================================
-            -- Update monitors
-            -- =================================================
-
-            drawMap(
-                players
-            )
-
-
-            -- =================================================
-            -- Update terminal
-            -- =================================================
-
-            displayTerminal(
-                senderID,
-                players,
-                message.timestamp
-            )
+                    displayTerminal(
+                        senderID,
+                        players,
+                        message.timestamp
+                    )
+                end
+            end
         end
+    end,
+
+    function()
+        usernameHelper.worker(4)
     end
-end
+)
