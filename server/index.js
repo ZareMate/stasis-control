@@ -39,6 +39,7 @@ const DISCORD_USERS_FILE = path.join(DATA_DIR, "discord-users.json");
 const DISCORD_SESSIONS_FILE = path.join(DATA_DIR, "discord-sessions.json");
 const SABLE_NAMES_FILE = path.join(DATA_DIR, "sable-names.json");
 const RADAR_BUILDINGS_FILE = path.join(DATA_DIR, "radar-buildings.json");
+const RADAR_ROADS_FILE = path.join(DATA_DIR, "radar-roads.json");
 const PULL_API_TOKEN = process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN || "";
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
@@ -323,8 +324,24 @@ function normalizeRadarBuilding(building) {
     : null;
 }
 
+function loadRadarRoads() {
+  try {
+    const value = JSON.parse(fs.readFileSync(RADAR_ROADS_FILE, "utf8"));
+    return Array.isArray(value) ? value.map(normalizeRadarRoad).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeRadarRoad(road) {
+  if (!road || typeof road.id !== "string") return null;
+  const { x1, z1, x2, z2 } = road;
+  return [x1, z1, x2, z2].every(Number.isFinite) ? { id: road.id, x1, z1, x2, z2 } : null;
+}
+
 let sableNames = loadSableNames();
 let radarBuildings = loadRadarBuildings();
+let radarRoads = loadRadarRoads();
 
 function saveSableNames() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -338,6 +355,13 @@ function saveRadarBuildings() {
   const temporary = RADAR_BUILDINGS_FILE + ".tmp";
   fs.writeFileSync(temporary, JSON.stringify(radarBuildings, null, 2) + "\n", "utf8");
   fs.renameSync(temporary, RADAR_BUILDINGS_FILE);
+}
+
+function saveRadarRoads() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const temporary = RADAR_ROADS_FILE + ".tmp";
+  fs.writeFileSync(temporary, JSON.stringify(radarRoads, null, 2) + "\n", "utf8");
+  fs.renameSync(temporary, RADAR_ROADS_FILE);
 }
 
 function sableDisplayName(id) {
@@ -781,6 +805,7 @@ function radarSnapshot() {
     players: [...players.values()].sort((a, b) => a.username.localeCompare(b.username)),
     sableContraptions: numberedSables,
     buildings: [...radarBuildings].sort((a, b) => a.name.localeCompare(b.name)),
+    roads: [...radarRoads],
     updatedAt: reports.length
       ? reports.reduce((latest, report) => Math.max(latest, report.updatedAt), 0)
       : null
@@ -1499,6 +1524,50 @@ app.delete("/api/radar/building/:id", requireLogin, (req, res) => {
   } catch (error) {
     console.error("[Radar] Unable to save buildings:", error.message);
     return res.status(500).json({ error: "Unable to save building" });
+  }
+
+  broadcastRadar();
+  res.json({ ok: true });
+});
+
+app.post("/api/radar/road", requireLogin, (req, res) => {
+  const id = typeof req.body?.id === "string" ? req.body.id.trim() : "";
+  const x1 = Number(req.body?.x1);
+  const z1 = Number(req.body?.z1);
+  const x2 = Number(req.body?.x2);
+  const z2 = Number(req.body?.z2);
+
+  if (![x1, z1, x2, z2].every(Number.isFinite)) {
+    return res.status(400).json({ error: "Two finite X/Z corners are required" });
+  }
+
+  const road = { id: id || crypto.randomUUID(), x1, z1, x2, z2 };
+  const existingIndex = id ? radarRoads.findIndex(item => item.id === id) : -1;
+  if (existingIndex >= 0) radarRoads[existingIndex] = road;
+  else radarRoads.push(road);
+
+  try {
+    saveRadarRoads();
+  } catch (error) {
+    console.error("[Radar] Unable to save roads:", error.message);
+    return res.status(500).json({ error: "Unable to save road" });
+  }
+
+  broadcastRadar();
+  res.json({ ok: true, road });
+});
+
+app.delete("/api/radar/road/:id", requireLogin, (req, res) => {
+  const id = String(req.params.id || "").trim();
+  const nextRoads = radarRoads.filter(road => road.id !== id);
+  if (nextRoads.length === radarRoads.length) return res.status(404).json({ error: "Road not found" });
+  radarRoads = nextRoads;
+
+  try {
+    saveRadarRoads();
+  } catch (error) {
+    console.error("[Radar] Unable to save roads:", error.message);
+    return res.status(500).json({ error: "Unable to save road" });
   }
 
   broadcastRadar();
