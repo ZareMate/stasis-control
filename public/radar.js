@@ -30,7 +30,9 @@ showSable.checked = sableVisible;
 function escapeHtml(value) { const node = document.createElement("span"); node.textContent = value; return node.innerHTML; }
 function statusFor(player) { const status = String(player.status || "unknown").toLowerCase(); return ["enemy", "ally", "team", "unknown"].includes(status) ? status : "unknown"; }
 function pasteBuildingCoordinates(event, xInput, zInput) {
-  const values = (event.clipboardData?.getData("text") || "").trim().split(/[\s,]+/).filter(Boolean);
+  const text = (event.clipboardData?.getData("text") || "").trim();
+  const teleport = text.match(/\btp\s+@\S+\s+(-?(?:\d+(?:\.\d+)?|\.\d+))\s+(-?(?:\d+(?:\.\d+)?|\.\d+))\s+(-?(?:\d+(?:\.\d+)?|\.\d+))/i);
+  const values = teleport ? teleport.slice(1) : text.split(/[\s,]+/).filter(Boolean);
   if (values.length !== 1 && values.length !== 3) return;
   const numbers = values.map(Number);
   if (!numbers.every(Number.isFinite)) return;
