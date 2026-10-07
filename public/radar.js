@@ -11,6 +11,7 @@ const sablePanel = document.getElementById("sablePanel");
 const sableLegend = document.getElementById("sableLegend");
 const radarShell = map.closest(".radar-shell");
 const buildingForm = document.getElementById("buildingForm");
+const buildingId = document.getElementById("buildingId");
 const buildingName = document.getElementById("buildingName");
 const buildingX1 = document.getElementById("buildingX1");
 const buildingZ1 = document.getElementById("buildingZ1");
@@ -18,6 +19,7 @@ const buildingX2 = document.getElementById("buildingX2");
 const buildingZ2 = document.getElementById("buildingZ2");
 const buildingList = document.getElementById("buildingList");
 const buildingStatus = document.getElementById("buildingStatus");
+const buildingSubmit = document.getElementById("buildingSubmit");
 let socket, reconnectTimer, players = [], sableContraptions = [], buildings = [];
 let view = { x: -111, z: 243, scale: 2 };
 let drag = null;
@@ -132,7 +134,7 @@ function render(nextPlayers, nextSableContraptions, nextBuildings, updatedAt) {
   }).join("") : '<div class="empty-log">No SABLE contraptions detected.</div>';
   buildingList.innerHTML = buildings.length ? buildings.map(building =>
     '<div class="building-row"><div><strong>' + escapeHtml(building.name) + '</strong><span>X ' + Math.round(building.x1) + '–' + Math.round(building.x2) + ' · Z ' + Math.round(building.z1) + '–' + Math.round(building.z2) + '</span></div>' +
-    '<button class="building-delete" type="button" data-building-id="' + escapeHtml(building.id) + '">REMOVE</button></div>'
+    '<div class="building-actions"><button class="building-edit" type="button" data-building-id="' + escapeHtml(building.id) + '">EDIT</button><button class="building-delete" type="button" data-building-id="' + escapeHtml(building.id) + '">REMOVE</button></div></div>'
   ).join("") : '<div class="empty-log">No buildings defined.</div>';
   meta.textContent = `${players.length} player${players.length === 1 ? "" : "s"}${sableVisible ? ` · ${sableContraptions.length} SABLE${sableContraptions.length === 1 ? "" : "s"}` : ""}${updatedAt ? " · updated " + new Date(updatedAt).toLocaleTimeString() : ""}`;
 }
@@ -143,29 +145,60 @@ showSable.addEventListener("change", () => {
 });
 buildingForm.addEventListener("submit", async event => {
   event.preventDefault();
+  const editing = Boolean(buildingId.value);
+  buildingSubmit.disabled = true;
   buildingStatus.textContent = "Saving…";
   try {
     const response = await fetch("/api/radar/building", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: buildingName.value, x1: buildingX1.value, z1: buildingZ1.value, x2: buildingX2.value, z2: buildingZ2.value })
+      body: JSON.stringify({ id: buildingId.value, name: buildingName.value, x1: buildingX1.value, z1: buildingZ1.value, x2: buildingX2.value, z2: buildingZ2.value })
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || "Unable to save building");
+    buildings = [...buildings.filter(building => building.id !== result.building.id), result.building];
+    render(players, sableContraptions, buildings, Date.now());
     buildingForm.reset();
-    buildingStatus.textContent = "Building added.";
+    buildingSubmit.textContent = "ADD BUILDING";
+    buildingStatus.textContent = editing ? "Building updated." : "Building added.";
   } catch (error) {
     buildingStatus.textContent = error.message;
+  } finally {
+    buildingSubmit.disabled = false;
   }
 });
 buildingList.addEventListener("click", async event => {
+  const editButton = event.target.closest(".building-edit");
+  if (editButton) {
+    const building = buildings.find(item => item.id === editButton.dataset.buildingId);
+    if (!building) return;
+    buildingId.value = building.id;
+    buildingName.value = building.name;
+    buildingX1.value = building.x1;
+    buildingZ1.value = building.z1;
+    buildingX2.value = building.x2;
+    buildingZ2.value = building.z2;
+    buildingSubmit.textContent = "SAVE CHANGES";
+    buildingStatus.textContent = "Editing " + building.name + ".";
+    buildingName.focus();
+    return;
+  }
+
   const button = event.target.closest(".building-delete");
   if (!button) return;
   button.disabled = true;
+  buildingStatus.textContent = "Removing…";
   try {
     const response = await fetch("/api/radar/building/" + encodeURIComponent(button.dataset.buildingId), { method: "DELETE" });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || "Unable to remove building");
+    buildings = buildings.filter(building => building.id !== button.dataset.buildingId);
+    render(players, sableContraptions, buildings, Date.now());
+    if (buildingId.value === button.dataset.buildingId) {
+      buildingForm.reset();
+      buildingSubmit.textContent = "ADD BUILDING";
+    }
+    buildingStatus.textContent = "Building removed.";
   } catch (error) {
     buildingStatus.textContent = error.message;
     button.disabled = false;
