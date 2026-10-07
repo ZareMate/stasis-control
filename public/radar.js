@@ -63,6 +63,12 @@ buildingX1.addEventListener("paste", event => pasteBuildingCoordinates(event, bu
 buildingX2.addEventListener("paste", event => pasteBuildingCoordinates(event, buildingX2, buildingZ2));
 roadX1.addEventListener("paste", event => pasteBuildingCoordinates(event, roadX1, roadZ1));
 roadX2.addEventListener("paste", event => pasteBuildingCoordinates(event, roadX2, roadZ2));
+for (const input of [buildingX1, buildingZ1, buildingX2, buildingZ2, roadX1, roadZ1, roadX2, roadZ2]) {
+  input.addEventListener("blur", () => {
+    const value = sanitizeCoordinate(input.value);
+    if (Number.isFinite(value)) input.value = String(value);
+  });
+}
 function renderRoadCenterlines(width, height) {
   map.querySelector(".radar-road-markings")?.remove();
   if (!roads.length) return;
