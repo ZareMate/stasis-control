@@ -20,7 +20,16 @@ const buildingZ2 = document.getElementById("buildingZ2");
 const buildingList = document.getElementById("buildingList");
 const buildingStatus = document.getElementById("buildingStatus");
 const buildingSubmit = document.getElementById("buildingSubmit");
-let socket, reconnectTimer, players = [], sableContraptions = [], buildings = [];
+const roadForm = document.getElementById("roadForm");
+const roadId = document.getElementById("roadId");
+const roadX1 = document.getElementById("roadX1");
+const roadZ1 = document.getElementById("roadZ1");
+const roadX2 = document.getElementById("roadX2");
+const roadZ2 = document.getElementById("roadZ2");
+const roadList = document.getElementById("roadList");
+const roadStatus = document.getElementById("roadStatus");
+const roadSubmit = document.getElementById("roadSubmit");
+let socket, reconnectTimer, players = [], sableContraptions = [], buildings = [], roads = [];
 let view = { x: -111, z: 243, scale: 2 };
 let drag = null;
 
@@ -42,17 +51,32 @@ function pasteBuildingCoordinates(event, xInput, zInput) {
 }
 buildingX1.addEventListener("paste", event => pasteBuildingCoordinates(event, buildingX1, buildingZ1));
 buildingX2.addEventListener("paste", event => pasteBuildingCoordinates(event, buildingX2, buildingZ2));
+roadX1.addEventListener("paste", event => pasteBuildingCoordinates(event, roadX1, roadZ1));
+roadX2.addEventListener("paste", event => pasteBuildingCoordinates(event, roadX2, roadZ2));
 function renderMap() {
   const { width, height } = map.getBoundingClientRect();
   if (!width || !height) return;
-  map.querySelectorAll(".radar-player,.radar-sable,.radar-building").forEach(node => node.remove());
-  empty.hidden = players.length > 0 || buildings.length > 0 || (sableVisible && sableContraptions.length > 0);
+  map.querySelectorAll(".radar-player,.radar-sable,.radar-building,.radar-road").forEach(node => node.remove());
+  empty.hidden = players.length > 0 || buildings.length > 0 || roads.length > 0 || (sableVisible && sableContraptions.length > 0);
   const grid = Math.max(12, 10 * view.scale);
   const offsetX = width / 2 - ((view.x * view.scale) % grid);
   const offsetZ = height / 2 - ((view.z * view.scale) % grid);
   map.style.backgroundSize = `${grid}px ${grid}px,${grid}px ${grid}px,${grid * 5}px ${grid * 5}px,${grid * 5}px ${grid * 5}px`;
   map.style.backgroundPosition = `${offsetX}px ${offsetZ}px,${offsetX}px ${offsetZ}px,${offsetX}px ${offsetZ}px,${offsetX}px ${offsetZ}px`;
   coordinates.textContent = `X ${Math.round(view.x)} · Z ${Math.round(view.z)} · ${view.scale.toFixed(1)} px/block`;
+  for (const road of roads) {
+    const point = document.createElement("div");
+    point.className = "radar-road";
+    const minX = Math.min(road.x1, road.x2);
+    const minZ = Math.min(road.z1, road.z2);
+    point.style.left = (width / 2 + (minX - view.x) * view.scale) + "px";
+    point.style.top = (height / 2 + (minZ - view.z) * view.scale) + "px";
+    point.style.width = Math.max(14, Math.abs(road.x2 - road.x1) * view.scale) + "px";
+    point.style.height = Math.max(14, Math.abs(road.z2 - road.z1) * view.scale) + "px";
+    point.title = "Road: X " + road.x1 + "–" + road.x2 + ", Z " + road.z1 + "–" + road.z2;
+    map.append(point);
+  }
+
   for (const player of players) {
     const point = document.createElement("div");
     const status = statusFor(player);
@@ -103,10 +127,11 @@ function renderMap() {
     map.append(point);
   }
 }
-function render(nextPlayers, nextSableContraptions, nextBuildings, updatedAt) {
+function render(nextPlayers, nextSableContraptions, nextBuildings, nextRoads, updatedAt) {
   players = nextPlayers;
   sableContraptions = nextSableContraptions;
   buildings = nextBuildings;
+  roads = nextRoads;
   renderMap();
   sablePanel.classList.toggle("sable-hidden", !sableVisible);
   sableLegend.classList.toggle("sable-hidden", !sableVisible);
@@ -138,12 +163,17 @@ function render(nextPlayers, nextSableContraptions, nextBuildings, updatedAt) {
     '<div class="building-row"><div><strong>' + escapeHtml(building.name) + '</strong><span>X ' + Math.round(building.x1) + '–' + Math.round(building.x2) + ' · Z ' + Math.round(building.z1) + '–' + Math.round(building.z2) + '</span></div>' +
     '<div class="building-actions"><button class="building-edit" type="button" data-building-id="' + escapeHtml(building.id) + '">EDIT</button><button class="building-delete" type="button" data-building-id="' + escapeHtml(building.id) + '">REMOVE</button></div></div>'
   ).join("") : '<div class="empty-log">No buildings defined.</div>';
+
+  roadList.innerHTML = roads.length ? roads.map((road, index) =>
+    '<div class="road-row"><div><strong>ROAD ' + (index + 1) + '</strong><span>X ' + Math.round(road.x1) + '–' + Math.round(road.x2) + ' · Z ' + Math.round(road.z1) + '–' + Math.round(road.z2) + '</span></div>' +
+    '<button class="road-delete" type="button" data-road-id="' + escapeHtml(road.id) + '">REMOVE</button></div>'
+  ).join("") : '<div class="empty-log">No roads defined.</div>';
   meta.textContent = `${players.length} player${players.length === 1 ? "" : "s"}${sableVisible ? ` · ${sableContraptions.length} SABLE${sableContraptions.length === 1 ? "" : "s"}` : ""}${updatedAt ? " · updated " + new Date(updatedAt).toLocaleTimeString() : ""}`;
 }
 showSable.addEventListener("change", () => {
   sableVisible = showSable.checked;
   localStorage.setItem("radar-show-sable", String(sableVisible));
-  render(players, sableContraptions, buildings);
+  render(players, sableContraptions, buildings, roads);
 });
 buildingForm.addEventListener("submit", async event => {
   event.preventDefault();
@@ -159,7 +189,7 @@ buildingForm.addEventListener("submit", async event => {
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || "Unable to save building");
     buildings = [...buildings.filter(building => building.id !== result.building.id), result.building];
-    render(players, sableContraptions, buildings, Date.now());
+    render(players, sableContraptions, buildings, roads, Date.now());
     buildingForm.reset();
     buildingSubmit.textContent = "ADD BUILDING";
     buildingStatus.textContent = editing ? "Building updated." : "Building added.";
@@ -169,6 +199,59 @@ buildingForm.addEventListener("submit", async event => {
     buildingSubmit.disabled = false;
   }
 });
+roadForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const editing = Boolean(roadId.value);
+  roadSubmit.disabled = true;
+  roadStatus.textContent = "Saving…";
+  try {
+    const response = await fetch("/api/radar/road", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: roadId.value,
+        x1: roadX1.value,
+        z1: roadZ1.value,
+        x2: roadX2.value,
+        z2: roadZ2.value
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Unable to save road");
+    roads = [...roads.filter(road => road.id !== result.road.id), result.road];
+    render(players, sableContraptions, buildings, roads, Date.now());
+    roadForm.reset();
+    roadSubmit.textContent = "ADD ROAD";
+    roadStatus.textContent = editing ? "Road updated." : "Road added.";
+  } catch (error) {
+    roadStatus.textContent = error.message;
+  } finally {
+    roadSubmit.disabled = false;
+  }
+});
+
+roadList.addEventListener("click", async event => {
+  const button = event.target.closest(".road-delete");
+  if (!button) return;
+  button.disabled = true;
+  roadStatus.textContent = "Removing…";
+  try {
+    const response = await fetch("/api/radar/road/" + encodeURIComponent(button.dataset.roadId), { method: "DELETE" });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Unable to remove road");
+    roads = roads.filter(road => road.id !== button.dataset.roadId);
+    render(players, sableContraptions, buildings, roads, Date.now());
+    if (roadId.value === button.dataset.roadId) {
+      roadForm.reset();
+      roadSubmit.textContent = "ADD ROAD";
+    }
+    roadStatus.textContent = "Road removed.";
+  } catch (error) {
+    roadStatus.textContent = error.message;
+    button.disabled = false;
+  }
+});
+
 buildingList.addEventListener("click", async event => {
   const editButton = event.target.closest(".building-edit");
   if (editButton) {
@@ -195,7 +278,7 @@ buildingList.addEventListener("click", async event => {
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || "Unable to remove building");
     buildings = buildings.filter(building => building.id !== button.dataset.buildingId);
-    render(players, sableContraptions, buildings, Date.now());
+    render(players, sableContraptions, buildings, roads, Date.now());
     if (buildingId.value === button.dataset.buildingId) {
       buildingForm.reset();
       buildingSubmit.textContent = "ADD BUILDING";
@@ -230,7 +313,7 @@ sableList.addEventListener("click", async event => {
 
     const sable = sableContraptions.find(item => item.id === id);
     if (sable) sable.name = result.name || null;
-    render(players, sableContraptions, buildings, Date.now());
+    render(players, sableContraptions, buildings, roads, Date.now());
   } catch (error) {
     if (status) status.textContent = error.message;
     button.disabled = false;
@@ -254,5 +337,5 @@ map.addEventListener("pointercancel", stopDragging);
 map.addEventListener("wheel", event => { event.preventDefault(); const world = worldAt(event.clientX, event.clientY); view.scale = Math.min(12, Math.max(.15, view.scale * (event.deltaY < 0 ? 1.15 : 1 / 1.15))); const bounds = map.getBoundingClientRect(); view.x = world.x - (event.clientX - bounds.left - bounds.width / 2) / view.scale; view.z = world.z - (event.clientY - bounds.top - bounds.height / 2) / view.scale; renderMap(); }, { passive: false });
 document.getElementById("resetView").addEventListener("click", () => { view = { x: -111, z: 243, scale: 2 }; renderMap(); });
 new ResizeObserver(renderMap).observe(map);
-function connect() { clearTimeout(reconnectTimer); const protocol = location.protocol === "https:" ? "wss" : "ws"; socket = new WebSocket(`${protocol}://${location.host}/ws?role=radar-browser`); socket.onopen = () => { dot.classList.remove("offline"); connection.textContent = "Connected"; }; socket.onclose = () => { dot.classList.add("offline"); connection.textContent = "Disconnected"; reconnectTimer = setTimeout(connect, 2500); }; socket.onmessage = event => { try { const message = JSON.parse(event.data); if (message.type === "radar") render(message.players || [], message.sableContraptions || [], message.buildings || [], message.updatedAt); } catch {} }; }
+function connect() { clearTimeout(reconnectTimer); const protocol = location.protocol === "https:" ? "wss" : "ws"; socket = new WebSocket(`${protocol}://${location.host}/ws?role=radar-browser`); socket.onopen = () => { dot.classList.remove("offline"); connection.textContent = "Connected"; }; socket.onclose = () => { dot.classList.add("offline"); connection.textContent = "Disconnected"; reconnectTimer = setTimeout(connect, 2500); }; socket.onmessage = event => { try { const message = JSON.parse(event.data); if (message.type === "radar") render(message.players || [], message.sableContraptions || [], message.buildings || [], message.roads || [], message.updatedAt); } catch {} }; }
 connect();
