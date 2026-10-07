@@ -166,7 +166,7 @@ function render(nextPlayers, nextSableContraptions, nextBuildings, nextRoads, up
 
   roadList.innerHTML = roads.length ? roads.map((road, index) =>
     '<div class="road-row"><div><strong>ROAD ' + (index + 1) + '</strong><span>X ' + Math.round(road.x1) + '–' + Math.round(road.x2) + ' · Z ' + Math.round(road.z1) + '–' + Math.round(road.z2) + '</span></div>' +
-    '<button class="road-delete" type="button" data-road-id="' + escapeHtml(road.id) + '">REMOVE</button></div>'
+    '<div class="road-actions"><button class="road-edit" type="button" data-road-id="' + escapeHtml(road.id) + '">EDIT</button><button class="road-delete" type="button" data-road-id="' + escapeHtml(road.id) + '">REMOVE</button></div></div>'
   ).join("") : '<div class="empty-log">No roads defined.</div>';
   meta.textContent = `${players.length} player${players.length === 1 ? "" : "s"}${sableVisible ? ` · ${sableContraptions.length} SABLE${sableContraptions.length === 1 ? "" : "s"}` : ""}${updatedAt ? " · updated " + new Date(updatedAt).toLocaleTimeString() : ""}`;
 }
@@ -231,6 +231,21 @@ roadForm.addEventListener("submit", async event => {
 });
 
 roadList.addEventListener("click", async event => {
+  const editButton = event.target.closest(".road-edit");
+  if (editButton) {
+    const road = roads.find(item => item.id === editButton.dataset.roadId);
+    if (!road) return;
+    roadId.value = road.id;
+    roadX1.value = road.x1;
+    roadZ1.value = road.z1;
+    roadX2.value = road.x2;
+    roadZ2.value = road.z2;
+    roadSubmit.textContent = "SAVE CHANGES";
+    roadStatus.textContent = "Editing Road " + (roads.indexOf(road) + 1) + ".";
+    roadX1.focus();
+    return;
+  }
+
   const button = event.target.closest(".road-delete");
   if (!button) return;
   button.disabled = true;
