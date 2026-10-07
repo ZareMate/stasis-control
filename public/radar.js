@@ -38,12 +38,22 @@ showSable.checked = sableVisible;
 
 function escapeHtml(value) { const node = document.createElement("span"); node.textContent = value; return node.innerHTML; }
 function statusFor(player) { const status = String(player.status || "unknown").toLowerCase(); return ["enemy", "ally", "team", "unknown"].includes(status) ? status : "unknown"; }
+function sanitizeCoordinate(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : NaN;
+}
+function sanitizeCoordinateInputs(inputs) {
+  for (const input of inputs) {
+    const value = sanitizeCoordinate(input.value);
+    if (Number.isFinite(value)) input.value = String(value);
+  }
+}
 function pasteBuildingCoordinates(event, xInput, zInput) {
   const text = (event.clipboardData?.getData("text") || "").trim();
   const teleport = text.match(/\btp\s+@\S+\s+(-?(?:\d+(?:\.\d+)?|\.\d+))\s+(-?(?:\d+(?:\.\d+)?|\.\d+))\s+(-?(?:\d+(?:\.\d+)?|\.\d+))/i);
   const values = teleport ? teleport.slice(1) : text.split(/[\s,]+/).filter(Boolean);
   if (values.length !== 1 && values.length !== 3) return;
-  const numbers = values.map(Number);
+  const numbers = values.map(sanitizeCoordinate);
   if (!numbers.every(Number.isFinite)) return;
   event.preventDefault();
   xInput.value = String(numbers[0]);
@@ -429,6 +439,7 @@ showSable.addEventListener("change", () => {
 });
 buildingForm.addEventListener("submit", async event => {
   event.preventDefault();
+  sanitizeCoordinateInputs([buildingX1, buildingZ1, buildingX2, buildingZ2]);
   const editing = Boolean(buildingId.value);
   buildingSubmit.disabled = true;
   buildingStatus.textContent = "Saving…";
@@ -453,6 +464,7 @@ buildingForm.addEventListener("submit", async event => {
 });
 roadForm.addEventListener("submit", async event => {
   event.preventDefault();
+  sanitizeCoordinateInputs([roadX1, roadZ1, roadX2, roadZ2]);
   const editing = Boolean(roadId.value);
   roadSubmit.disabled = true;
   roadStatus.textContent = "Saving…";
@@ -488,10 +500,10 @@ roadList.addEventListener("click", async event => {
     const road = roads.find(item => item.id === editButton.dataset.roadId);
     if (!road) return;
     roadId.value = road.id;
-    roadX1.value = road.x1;
-    roadZ1.value = road.z1;
-    roadX2.value = road.x2;
-    roadZ2.value = road.z2;
+    roadX1.value = sanitizeCoordinate(road.x1);
+    roadZ1.value = sanitizeCoordinate(road.z1);
+    roadX2.value = sanitizeCoordinate(road.x2);
+    roadZ2.value = sanitizeCoordinate(road.z2);
     roadSubmit.textContent = "SAVE CHANGES";
     roadStatus.textContent = "Editing Road " + (roads.indexOf(road) + 1) + ".";
     roadX1.focus();
@@ -526,10 +538,10 @@ buildingList.addEventListener("click", async event => {
     if (!building) return;
     buildingId.value = building.id;
     buildingName.value = building.name;
-    buildingX1.value = building.x1;
-    buildingZ1.value = building.z1;
-    buildingX2.value = building.x2;
-    buildingZ2.value = building.z2;
+    buildingX1.value = sanitizeCoordinate(building.x1);
+    buildingZ1.value = sanitizeCoordinate(building.z1);
+    buildingX2.value = sanitizeCoordinate(building.x2);
+    buildingZ2.value = sanitizeCoordinate(building.z2);
     buildingSubmit.textContent = "SAVE CHANGES";
     buildingStatus.textContent = "Editing " + building.name + ".";
     buildingName.focus();
