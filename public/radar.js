@@ -53,6 +53,158 @@ buildingX1.addEventListener("paste", event => pasteBuildingCoordinates(event, bu
 buildingX2.addEventListener("paste", event => pasteBuildingCoordinates(event, buildingX2, buildingZ2));
 roadX1.addEventListener("paste", event => pasteBuildingCoordinates(event, roadX1, roadZ1));
 roadX2.addEventListener("paste", event => pasteBuildingCoordinates(event, roadX2, roadZ2));
+function renderRoadCenterlines(width, height) {
+  map.querySelector(".radar-road-markings")?.remove();
+  if (!roads.length) return;
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("radar-road-markings");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", width);
+  svg.setAttribute("height", height);
+
+  const segments = roads.map(road => {
+    const x1 = width / 2 + (road.x1 - view.x) * view.scale;
+    const z1 = height / 2 + (road.z1 - view.z) * view.scale;
+    const x2 = width / 2 + (road.x2 - view.x) * view.scale;
+    const z2 = height / 2 + (road.z2 - view.z) * view.scale;
+    const horizontal = Math.abs(x2 - x1) >= Math.abs(z2 - z1);
+    const start = horizontal
+      ? { x: Math.min(x1, x2), y: (z1 + z2) / 2 }
+      : { x: (x1 + x2) / 2, y: Math.min(z1, z2) };
+    const end = horizontal
+      ? { x: Math.max(x1, x2), y: (z1 + z2) / 2 }
+      : { x: (x1 + x2) / 2, y: Math.max(z1, z2) };
+    const widthPx = horizontal
+      ? Math.abs(z2 - z1)
+      : Math.abs(x2 - x1);
+    const halfWidth = Math.max(5, widthPx / 2);
+    return { start, end, horizontal, halfWidth };
+  }).filter(segment =>
+    Number.isFinite(segment.start.x) && Number.isFinite(segment.start.y) &&
+    Number.isFinite(segment.end.x) && Number.isFinite(segment.end.y)
+  );
+
+  const intersections = [];
+  const intersectionKey = point => `${Math.round(point.x * 10) / 10}:${Math.round(point.y * 10) / 10}`;
+
+  for (let i = 0; i < segments.length; i++) {
+    for (let j = i + 1; j < segments.length; j++) {
+      const a = segments[i];
+      const b = segments[j];
+      if (a.horizontal === b.horizontal) continue;
+
+      const horizontal = a.horizontal ? a : b;
+      const vertical = a.horizontal ? b : a;
+      const point = { x: vertical.start.x, y: horizontal.start.y };
+      const padding = Math.max(3, Math.min(horizontal.halfWidth, vertical.halfWidth) * 0.45);
+
+      if (
+        point.x < horizontal.start.x - padding ||
+        point.x > horizontal.end.x + padding ||
+        point.y < vertical.start.y - padding ||
+        point.y > vertical.end.y + padding
+      ) continue;
+
+      const horizontalEndpoint =
+        Math.min(Math.abs(point.x - horizontal.start.x), Math.abs(point.x - horizontal.end.x)) <= padding;
+      const verticalEndpoint =
+        Math.min(Math.abs(point.y - vertical.start.y), Math.abs(point.y - vertical.end.y)) <= padding;
+
+      intersections.push({
+        point,
+        a,
+        b,
+        padding,
+        corner: horizontalEndpoint && verticalEndpoint,
+        key: intersectionKey(point)
+      });
+    }
+  }
+
+  const grouped = new Map();
+  for (const intersection of intersections) {
+    if (!grouped.has(intersection.key)) grouped.set(intersection.key, []);
+    grouped.get(intersection.key).push(intersection);
+  }
+
+  const makePath = d => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    path.setAttribute("class", "radar-road-centerline");
+    path.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.append(path);
+  };
+
+  const trim = Math.max(4, 5 * view.scale);
+
+  for (const segment of segments) {
+    const nodes = [...new Set(
+      intersections
+        .filter(item => item.a === segment || item.b === segment)
+        .map(item => item.key)
+    )].map(key => grouped.get(key)?.[0]).filter(Boolean);
+
+    if (!nodes.length) {
+      makePath(`M ${segment.start.x} ${segment.start.y} L ${segment.end.x} ${segment.end.y}`);
+      continue;
+    }
+
+    const axisStart = segment.horizontal ? segment.start.x : segment.start.y;
+    const axisEnd = segment.horizontal ? segment.end.x : segment.end.y;
+    const cuts = [{ value: axisStart, point: segment.start }, ...nodes.map(node => ({
+      value: segment.horizontal ? node.point.x : node.point.y,
+      point: node.point
+    })), { value: axisEnd, point: segment.end }]
+      .sort((a, b) => a.value - b.value);
+
+    for (let i = 0; i < cuts.length - 1; i++) {
+      const from = cuts[i];
+      const to = cuts[i + 1];
+      const fromNode = nodes.find(node => intersectionKey(node.point) === intersectionKey(from.point));
+      const toNode = nodes.find(node => intersectionKey(node.point) === intersectionKey(to.point));
+      const fromGap = fromNode && !fromNode.corner ? fromNode.padding + trim : 0;
+      const toGap = toNode && !toNode.corner ? toNode.padding + trim : 0;
+
+      const fromValue = from.value + (from.value === axisStart ? 0 : fromGap);
+      const toValue = to.value - (to.value === axisEnd ? 0 : toGap);
+      if (toValue <= fromValue) continue;
+
+      if (segment.horizontal) {
+        makePath(`M ${fromValue} ${segment.start.y} L ${toValue} ${segment.start.y}`);
+      } else {
+        makePath(`M ${segment.start.x} ${fromValue} L ${segment.start.x} ${toValue}`);
+      }
+    }
+  }
+
+  // Rounded quarter-turns make two endpoint-connected road rectangles read as a corner,
+  // while interior crossings remain open so the center markings do not run through them.
+  const drawnCorners = new Set();
+  for (const intersection of intersections.filter(item => item.corner)) {
+    if (drawnCorners.has(intersection.key)) continue;
+    drawnCorners.add(intersection.key);
+
+    const point = intersection.point;
+    const radius = Math.max(4, Math.min(intersection.a.halfWidth, intersection.b.halfWidth) * 0.75);
+    const horizontal = intersection.a.horizontal ? intersection.a : intersection.b;
+    const vertical = intersection.a.horizontal ? intersection.b : intersection.a;
+
+    const hx = point.x <= (horizontal.start.x + horizontal.end.x) / 2
+      ? point.x + radius
+      : point.x - radius;
+    const vy = point.y <= (vertical.start.y + vertical.end.y) / 2
+      ? point.y + radius
+      : point.y - radius;
+
+    const control = `M ${hx} ${point.y} Q ${point.x} ${point.y} ${point.x} ${vy}`;
+    makePath(control);
+  }
+
+  map.append(svg);
+}
+
 function renderMap() {
   const { width, height } = map.getBoundingClientRect();
   if (!width || !height) return;
@@ -76,6 +228,8 @@ function renderMap() {
     point.title = "Road: X " + road.x1 + "–" + road.x2 + ", Z " + road.z1 + "–" + road.z2;
     map.append(point);
   }
+
+  renderRoadCenterlines(width, height);
 
   for (const player of players) {
     const point = document.createElement("div");
