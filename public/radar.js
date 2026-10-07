@@ -27,6 +27,17 @@ showSable.checked = sableVisible;
 
 function escapeHtml(value) { const node = document.createElement("span"); node.textContent = value; return node.innerHTML; }
 function statusFor(player) { const status = String(player.status || "unknown").toLowerCase(); return ["enemy", "ally", "team", "unknown"].includes(status) ? status : "unknown"; }
+function pasteBuildingCoordinates(event, xInput, zInput) {
+  const values = (event.clipboardData?.getData("text") || "").trim().split(/[\s,]+/).filter(Boolean);
+  if (values.length !== 1 && values.length !== 3) return;
+  const numbers = values.map(Number);
+  if (!numbers.every(Number.isFinite)) return;
+  event.preventDefault();
+  xInput.value = String(numbers[0]);
+  if (numbers.length === 3) zInput.value = String(numbers[2]);
+}
+buildingX1.addEventListener("paste", event => pasteBuildingCoordinates(event, buildingX1, buildingZ1));
+buildingX2.addEventListener("paste", event => pasteBuildingCoordinates(event, buildingX2, buildingZ2));
 function renderMap() {
   const { width, height } = map.getBoundingClientRect();
   if (!width || !height) return;
