@@ -65,29 +65,48 @@ function renderRoadCenterlines(width, height) {
   svg.setAttribute("height", height);
 
   const segments = roads.map(road => {
-    const x1 = width / 2 + (road.x1 - view.x) * view.scale;
-    const z1 = height / 2 + (road.z1 - view.z) * view.scale;
-    const x2 = width / 2 + (road.x2 - view.x) * view.scale;
-    const z2 = height / 2 + (road.z2 - view.z) * view.scale;
-    const horizontal = Math.abs(x2 - x1) >= Math.abs(z2 - z1);
-    const start = horizontal
-      ? { x: Math.min(x1, x2), y: (z1 + z2) / 2 }
-      : { x: (x1 + x2) / 2, y: Math.min(z1, z2) };
-    const end = horizontal
-      ? { x: Math.max(x1, x2), y: (z1 + z2) / 2 }
-      : { x: (x1 + x2) / 2, y: Math.max(z1, z2) };
-    const widthPx = horizontal
-      ? Math.abs(z2 - z1)
-      : Math.abs(x2 - x1);
-    const halfWidth = Math.max(5, widthPx / 2);
-    return { start, end, horizontal, halfWidth };
-  }).filter(segment =>
-    Number.isFinite(segment.start.x) && Number.isFinite(segment.start.y) &&
-    Number.isFinite(segment.end.x) && Number.isFinite(segment.end.y)
-  );
+    const ax = width / 2 + (road.x1 - view.x) * view.scale;
+    const ay = height / 2 + (road.z1 - view.z) * view.scale;
+    const bx = width / 2 + (road.x2 - view.x) * view.scale;
+    const by = height / 2 + (road.z2 - view.z) * view.scale;
 
-  const intersections = [];
-  const intersectionKey = point => `${Math.round(point.x * 10) / 10}:${Math.round(point.y * 10) / 10}`;
+    const minX = Math.min(ax, bx);
+    const maxX = Math.max(ax, bx);
+    const minY = Math.min(ay, by);
+    const maxY = Math.max(ay, by);
+    const horizontal = (maxX - minX) >= (maxY - minY);
+
+    return horizontal
+      ? {
+          road,
+          horizontal: true,
+          start: { x: minX, y: (minY + maxY) / 2 },
+          end: { x: maxX, y: (minY + maxY) / 2 },
+          minX, maxX, minY, maxY,
+          halfWidth: Math.max(4, (maxY - minY) / 2)
+        }
+      : {
+          road,
+          horizontal: false,
+          start: { x: (minX + maxX) / 2, y: minY },
+          end: { x: (minX + maxX) / 2, y: maxY },
+          minX, maxX, minY, maxY,
+          halfWidth: Math.max(4, (maxX - minX) / 2)
+        };
+  });
+
+  const EPS = Math.max(3, 2 * view.scale);
+  const JUNCTION_GAP = Math.max(5, 3.5 * view.scale);
+
+  const junctions = [];
+
+  function within(value, min, max, tolerance = EPS) {
+    return value >= min - tolerance && value <= max + tolerance;
+  }
+
+  function addJunction(a, b, start, end, kind) {
+    junctions.push({ a, b, start, end, kind });
+  }
 
   for (let i = 0; i < segments.length; i++) {
     for (let j = i + 1; j < segments.length; j++) {
@@ -97,36 +116,64 @@ function renderRoadCenterlines(width, height) {
 
       const horizontal = a.horizontal ? a : b;
       const vertical = a.horizontal ? b : a;
-      const point = { x: vertical.start.x, y: horizontal.start.y };
-      const padding = Math.max(3, Math.min(horizontal.halfWidth, vertical.halfWidth) * 0.45);
+      const centerCross = {
+        x: vertical.start.x,
+        y: horizontal.start.y
+      };
 
+      // Full crossroads: both centerlines pass through each other.
       if (
-        point.x < horizontal.start.x - padding ||
-        point.x > horizontal.end.x + padding ||
-        point.y < vertical.start.y - padding ||
-        point.y > vertical.end.y + padding
-      ) continue;
+        within(centerCross.x, horizontal.start.x, horizontal.end.x) &&
+        within(centerCross.y, vertical.start.y, vertical.end.y)
+      ) {
+        addJunction(horizontal, vertical, centerCross, centerCross, "cross");
+        continue;
+      }
 
-      const horizontalEndpoint =
-        Math.min(Math.abs(point.x - horizontal.start.x), Math.abs(point.x - horizontal.end.x)) <= padding;
-      const verticalEndpoint =
-        Math.min(Math.abs(point.y - vertical.start.y), Math.abs(point.y - vertical.end.y)) <= padding;
+      // Horizontal road joins the SIDE of a vertical road.
+      const horizontalEndpoints = [horizontal.start, horizontal.end];
+      for (const endpoint of horizontalEndpoints) {
+        const sideX = Math.abs(endpoint.x - vertical.minX) <= EPS
+          ? vertical.minX
+          : Math.abs(endpoint.x - vertical.maxX) <= EPS
+            ? vertical.maxX
+            : null;
 
-      intersections.push({
-        point,
-        a,
-        b,
-        padding,
-        corner: horizontalEndpoint && verticalEndpoint,
-        key: intersectionKey(point)
-      });
+        if (
+          sideX !== null &&
+          within(endpoint.y, vertical.minY, vertical.maxY)
+        ) {
+          const target = {
+            x: vertical.start.x,
+            y: Math.max(vertical.minY, Math.min(vertical.maxY, endpoint.y))
+          };
+          addJunction(horizontal, vertical, endpoint, target, "join");
+          break;
+        }
+      }
+
+      // Vertical road joins the SIDE of a horizontal road.
+      const verticalEndpoints = [vertical.start, vertical.end];
+      for (const endpoint of verticalEndpoints) {
+        const sideY = Math.abs(endpoint.y - horizontal.minY) <= EPS
+          ? horizontal.minY
+          : Math.abs(endpoint.y - horizontal.maxY) <= EPS
+            ? horizontal.maxY
+            : null;
+
+        if (
+          sideY !== null &&
+          within(endpoint.x, horizontal.minX, horizontal.maxX)
+        ) {
+          const target = {
+            x: Math.max(horizontal.minX, Math.min(horizontal.maxX, endpoint.x)),
+            y: horizontal.start.y
+          };
+          addJunction(vertical, horizontal, endpoint, target, "join");
+          break;
+        }
+      }
     }
-  }
-
-  const grouped = new Map();
-  for (const intersection of intersections) {
-    if (!grouped.has(intersection.key)) grouped.set(intersection.key, []);
-    grouped.get(intersection.key).push(intersection);
   }
 
   const makePath = d => {
@@ -137,68 +184,119 @@ function renderRoadCenterlines(width, height) {
     svg.append(path);
   };
 
-  const trim = Math.max(4, 5 * view.scale);
+  function pointKey(point) {
+    return `${Math.round(point.x * 10) / 10}:${Math.round(point.y * 10) / 10}`;
+  }
 
+  // Draw the straight centerlines, breaking them at real crossroads and where
+  // a side road turns into another road's centerline.
   for (const segment of segments) {
-    const nodes = [...new Set(
-      intersections
-        .filter(item => item.a === segment || item.b === segment)
-        .map(item => item.key)
-    )].map(key => grouped.get(key)?.[0]).filter(Boolean);
+    const cuts = [{ value: segment.horizontal ? segment.start.x : segment.start.y, point: segment.start }];
 
-    if (!nodes.length) {
-      makePath(`M ${segment.start.x} ${segment.start.y} L ${segment.end.x} ${segment.end.y}`);
-      continue;
+    for (const junction of junctions) {
+      if (junction.a !== segment && junction.b !== segment) continue;
+
+      const point = junction.a === segment ? junction.start : junction.end;
+      cuts.push({
+        value: segment.horizontal ? point.x : point.y,
+        point,
+        junction
+      });
     }
 
-    const axisStart = segment.horizontal ? segment.start.x : segment.start.y;
-    const axisEnd = segment.horizontal ? segment.end.x : segment.end.y;
-    const cuts = [{ value: axisStart, point: segment.start }, ...nodes.map(node => ({
-      value: segment.horizontal ? node.point.x : node.point.y,
-      point: node.point
-    })), { value: axisEnd, point: segment.end }]
-      .sort((a, b) => a.value - b.value);
+    cuts.push({ value: segment.horizontal ? segment.end.x : segment.end.y, point: segment.end });
+    cuts.sort((a, b) => a.value - b.value);
 
-    for (let i = 0; i < cuts.length - 1; i++) {
-      const from = cuts[i];
-      const to = cuts[i + 1];
-      const fromNode = nodes.find(node => intersectionKey(node.point) === intersectionKey(from.point));
-      const toNode = nodes.find(node => intersectionKey(node.point) === intersectionKey(to.point));
-      const fromGap = fromNode && !fromNode.corner ? fromNode.padding + trim : 0;
-      const toGap = toNode && !toNode.corner ? toNode.padding + trim : 0;
+    for (let index = 0; index < cuts.length - 1; index++) {
+      const from = cuts[index];
+      const to = cuts[index + 1];
 
-      const fromValue = from.value + (from.value === axisStart ? 0 : fromGap);
-      const toValue = to.value - (to.value === axisEnd ? 0 : toGap);
-      if (toValue <= fromValue) continue;
+      let fromGap = 0;
+      let toGap = 0;
 
+      if (from.junction) {
+        fromGap = from.junction.kind === "cross"
+          ? JUNCTION_GAP
+          : JUNCTION_GAP * 0.65;
+      }
+
+      if (to.junction) {
+        toGap = to.junction.kind === "cross"
+          ? JUNCTION_GAP
+          : JUNCTION_GAP * 0.65;
+      }
+
+      let fromValue = from.value + fromGap;
+      let toValue = to.value - toGap;
+
+      // When a junction point is not aligned with a segment endpoint, only open
+      // the centerline locally. Endpoint joins stay visually connected by the curve.
       if (segment.horizontal) {
+        fromValue = Math.max(fromValue, segment.start.x);
+        toValue = Math.min(toValue, segment.end.x);
+        if (toValue <= fromValue) continue;
         makePath(`M ${fromValue} ${segment.start.y} L ${toValue} ${segment.start.y}`);
       } else {
+        fromValue = Math.max(fromValue, segment.start.y);
+        toValue = Math.min(toValue, segment.end.y);
+        if (toValue <= fromValue) continue;
         makePath(`M ${segment.start.x} ${fromValue} L ${segment.start.x} ${toValue}`);
       }
     }
   }
 
-  // Rounded quarter-turns make two endpoint-connected road rectangles read as a corner,
-  // while interior crossings remain open so the center markings do not run through them.
-  const drawnCorners = new Set();
-  for (const intersection of intersections.filter(item => item.corner)) {
-    if (drawnCorners.has(intersection.key)) continue;
-    drawnCorners.add(intersection.key);
+  // Draw smooth quarter-turn connectors for road edges that meet at a corner/T.
+  // The connector starts at the actual road centerline endpoint and bends toward
+  // the target road's centerline, rather than requiring their centerlines to cross.
+  const drawn = new Set();
 
-    const point = intersection.point;
-    const radius = Math.max(4, Math.min(intersection.a.halfWidth, intersection.b.halfWidth) * 0.75);
-    const horizontal = intersection.a.horizontal ? intersection.a : intersection.b;
-    const vertical = intersection.a.horizontal ? intersection.b : intersection.a;
+  for (const junction of junctions.filter(item => item.kind === "join")) {
+    const aKey = pointKey(junction.start);
+    const bKey = pointKey(junction.end);
+    const key = [aKey, bKey].sort().join("|");
+    if (drawn.has(key)) continue;
+    drawn.add(key);
 
-    const hx = point.x <= (horizontal.start.x + horizontal.end.x) / 2
-      ? point.x + radius
-      : point.x - radius;
-    const vy = point.y <= (vertical.start.y + vertical.end.y) / 2
-      ? point.y + radius
-      : point.y - radius;
+    const dx = junction.end.x - junction.start.x;
+    const dy = junction.end.y - junction.start.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance < 1) continue;
 
-    const control = `M ${hx} ${point.y} Q ${point.x} ${point.y} ${point.x} ${vy}`;
+    const radius = Math.min(
+      Math.max(4, Math.min(junction.a.halfWidth, junction.b.halfWidth) * 0.8),
+      Math.max(4, distance * 0.55)
+    );
+
+    const startSignX = Math.sign(junction.end.x - junction.start.x);
+    const startSignY = Math.sign(junction.end.y - junction.start.y);
+
+    let control;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      const control1 = {
+        x: junction.start.x + startSignX * radius,
+        y: junction.start.y
+      };
+      const control2 = {
+        x: junction.end.x,
+        y: junction.end.y - Math.sign(dy) * radius
+      };
+      control =
+        `M ${junction.start.x} ${junction.start.y} ` +
+        `C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${junction.end.x} ${junction.end.y}`;
+    } else {
+      const control1 = {
+        x: junction.start.x,
+        y: junction.start.y + startSignY * radius
+      };
+      const control2 = {
+        x: junction.end.x - Math.sign(dx) * radius,
+        y: junction.end.y
+      };
+      control =
+        `M ${junction.start.x} ${junction.start.y} ` +
+        `C ${control1.x} ${control1.y}, ${control2.x} ${control2.y}, ${junction.end.x} ${junction.end.y}`;
+    }
+
     makePath(control);
   }
 
