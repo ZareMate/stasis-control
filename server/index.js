@@ -1534,10 +1534,10 @@ app.delete("/api/radar/building/:id", requireLogin, (req, res) => {
 
 app.post("/api/radar/road", requireLogin, (req, res) => {
   const id = typeof req.body?.id === "string" ? req.body.id.trim() : "";
-  const x1 = Number(req.body?.x1);
-  const z1 = Number(req.body?.z1);
-  const x2 = Number(req.body?.x2);
-  const z2 = Number(req.body?.z2);
+  const x1 = Math.round(Number(req.body?.x1));
+  const z1 = Math.round(Number(req.body?.z1));
+  const x2 = Math.round(Number(req.body?.x2));
+  const z2 = Math.round(Number(req.body?.z2));
 
   if (![x1, z1, x2, z2].every(Number.isFinite)) {
     return res.status(400).json({ error: "Two finite X/Z corners are required" });
