@@ -38,6 +38,7 @@ const LOGS_FILE = path.join(DATA_DIR, "activity-logs.json");
 const DISCORD_USERS_FILE = path.join(DATA_DIR, "discord-users.json");
 const DISCORD_SESSIONS_FILE = path.join(DATA_DIR, "discord-sessions.json");
 const SABLE_NAMES_FILE = path.join(DATA_DIR, "sable-names.json");
+const RADAR_BUILDINGS_FILE = path.join(DATA_DIR, "radar-buildings.json");
 const PULL_API_TOKEN = process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN || "";
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
@@ -302,13 +303,41 @@ function loadSableNames() {
   }
 }
 
+function loadRadarBuildings() {
+  try {
+    const value = JSON.parse(fs.readFileSync(RADAR_BUILDINGS_FILE, "utf8"));
+    return Array.isArray(value) ? value.map(normalizeRadarBuilding).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeRadarBuilding(building) {
+  if (!building || typeof building.id !== "string" || typeof building.name !== "string") return null;
+  const x1 = Number.isFinite(building.x1) ? building.x1 : building.x;
+  const z1 = Number.isFinite(building.z1) ? building.z1 : building.z;
+  const x2 = Number.isFinite(building.x2) ? building.x2 : x1;
+  const z2 = Number.isFinite(building.z2) ? building.z2 : z1;
+  return Number.isFinite(x1) && Number.isFinite(z1) && Number.isFinite(x2) && Number.isFinite(z2)
+    ? { id: building.id, name: building.name, x1, z1, x2, z2 }
+    : null;
+}
+
 let sableNames = loadSableNames();
+let radarBuildings = loadRadarBuildings();
 
 function saveSableNames() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const temporary = SABLE_NAMES_FILE + ".tmp";
   fs.writeFileSync(temporary, JSON.stringify(sableNames, null, 2) + "\n", "utf8");
   fs.renameSync(temporary, SABLE_NAMES_FILE);
+}
+
+function saveRadarBuildings() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const temporary = RADAR_BUILDINGS_FILE + ".tmp";
+  fs.writeFileSync(temporary, JSON.stringify(radarBuildings, null, 2) + "\n", "utf8");
+  fs.renameSync(temporary, RADAR_BUILDINGS_FILE);
 }
 
 function sableDisplayName(id) {
@@ -751,6 +780,7 @@ function radarSnapshot() {
   return {
     players: [...players.values()].sort((a, b) => a.username.localeCompare(b.username)),
     sableContraptions: numberedSables,
+    buildings: [...radarBuildings].sort((a, b) => a.name.localeCompare(b.name)),
     updatedAt: reports.length
       ? reports.reduce((latest, report) => Math.max(latest, report.updatedAt), 0)
       : null
@@ -1428,6 +1458,51 @@ app.post("/api/radar/sable-name", requireLogin, (req, res) => {
     id,
     name: sableDisplayName(id)
   });
+});
+
+app.post("/api/radar/building", requireLogin, (req, res) => {
+  const id = typeof req.body?.id === "string" ? req.body.id.trim() : "";
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  const x1 = Number(req.body?.x1);
+  const z1 = Number(req.body?.z1);
+  const x2 = Number(req.body?.x2);
+  const z2 = Number(req.body?.z2);
+
+  if (!name || name.length > 40 || ![x1, z1, x2, z2].every(Number.isFinite)) {
+    return res.status(400).json({ error: "Building name and two finite X/Z corners are required" });
+  }
+
+  const building = { id: id || crypto.randomUUID(), name, x1, z1, x2, z2 };
+  const existingIndex = id ? radarBuildings.findIndex(item => item.id === id) : -1;
+  if (existingIndex >= 0) radarBuildings[existingIndex] = building;
+  else radarBuildings.push(building);
+
+  try {
+    saveRadarBuildings();
+  } catch (error) {
+    console.error("[Radar] Unable to save buildings:", error.message);
+    return res.status(500).json({ error: "Unable to save building" });
+  }
+
+  broadcastRadar();
+  res.json({ ok: true, building });
+});
+
+app.delete("/api/radar/building/:id", requireLogin, (req, res) => {
+  const id = String(req.params.id || "").trim();
+  const nextBuildings = radarBuildings.filter(building => building.id !== id);
+  if (nextBuildings.length === radarBuildings.length) return res.status(404).json({ error: "Building not found" });
+  radarBuildings = nextBuildings;
+
+  try {
+    saveRadarBuildings();
+  } catch (error) {
+    console.error("[Radar] Unable to save buildings:", error.message);
+    return res.status(500).json({ error: "Unable to save building" });
+  }
+
+  broadcastRadar();
+  res.json({ ok: true });
 });
 
 app.get("/api/health", (_req, res) => {

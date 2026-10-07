@@ -10,7 +10,15 @@ const showSable = document.getElementById("showSable");
 const sablePanel = document.getElementById("sablePanel");
 const sableLegend = document.getElementById("sableLegend");
 const radarShell = map.closest(".radar-shell");
-let socket, reconnectTimer, players = [], sableContraptions = [];
+const buildingForm = document.getElementById("buildingForm");
+const buildingName = document.getElementById("buildingName");
+const buildingX1 = document.getElementById("buildingX1");
+const buildingZ1 = document.getElementById("buildingZ1");
+const buildingX2 = document.getElementById("buildingX2");
+const buildingZ2 = document.getElementById("buildingZ2");
+const buildingList = document.getElementById("buildingList");
+const buildingStatus = document.getElementById("buildingStatus");
+let socket, reconnectTimer, players = [], sableContraptions = [], buildings = [];
 let view = { x: -111, z: 243, scale: 2 };
 let drag = null;
 
@@ -22,8 +30,8 @@ function statusFor(player) { const status = String(player.status || "unknown").t
 function renderMap() {
   const { width, height } = map.getBoundingClientRect();
   if (!width || !height) return;
-  map.querySelectorAll(".radar-player,.radar-sable").forEach(node => node.remove());
-  empty.hidden = players.length > 0 || (sableVisible && sableContraptions.length > 0);
+  map.querySelectorAll(".radar-player,.radar-sable,.radar-building").forEach(node => node.remove());
+  empty.hidden = players.length > 0 || buildings.length > 0 || (sableVisible && sableContraptions.length > 0);
   const grid = Math.max(12, 10 * view.scale);
   const offsetX = width / 2 - ((view.x * view.scale) % grid);
   const offsetZ = height / 2 - ((view.z * view.scale) % grid);
@@ -47,6 +55,22 @@ function renderMap() {
     map.append(point);
   }
 
+  for (const building of buildings) {
+    const point = document.createElement("div");
+    point.className = "radar-building";
+    const minX = Math.min(building.x1, building.x2);
+    const minZ = Math.min(building.z1, building.z2);
+    point.style.left = (width / 2 + (minX - view.x) * view.scale) + "px";
+    point.style.top = (height / 2 + (minZ - view.z) * view.scale) + "px";
+    point.style.width = Math.max(14, Math.abs(building.x2 - building.x1) * view.scale) + "px";
+    point.style.height = Math.max(14, Math.abs(building.z2 - building.z1) * view.scale) + "px";
+    point.title = `${building.name}: X ${building.x1}–${building.x2}, Z ${building.z1}–${building.z2}`;
+    const label = document.createElement("span");
+    label.textContent = building.name;
+    point.append(label);
+    map.append(point);
+  }
+
   if (!sableVisible) return;
   for (let index = 0; index < sableContraptions.length; index++) {
     const sable = sableContraptions[index];
@@ -64,9 +88,10 @@ function renderMap() {
     map.append(point);
   }
 }
-function render(nextPlayers, nextSableContraptions, updatedAt) {
+function render(nextPlayers, nextSableContraptions, nextBuildings, updatedAt) {
   players = nextPlayers;
   sableContraptions = nextSableContraptions;
+  buildings = nextBuildings;
   renderMap();
   sablePanel.classList.toggle("sable-hidden", !sableVisible);
   sableLegend.classList.toggle("sable-hidden", !sableVisible);
@@ -94,12 +119,46 @@ function render(nextPlayers, nextSableContraptions, updatedAt) {
       '<div class="sable-save-status" aria-live="polite"></div>' +
       '</div>';
   }).join("") : '<div class="empty-log">No SABLE contraptions detected.</div>';
+  buildingList.innerHTML = buildings.length ? buildings.map(building =>
+    '<div class="building-row"><div><strong>' + escapeHtml(building.name) + '</strong><span>X ' + Math.round(building.x1) + '–' + Math.round(building.x2) + ' · Z ' + Math.round(building.z1) + '–' + Math.round(building.z2) + '</span></div>' +
+    '<button class="building-delete" type="button" data-building-id="' + escapeHtml(building.id) + '">REMOVE</button></div>'
+  ).join("") : '<div class="empty-log">No buildings defined.</div>';
   meta.textContent = `${players.length} player${players.length === 1 ? "" : "s"}${sableVisible ? ` · ${sableContraptions.length} SABLE${sableContraptions.length === 1 ? "" : "s"}` : ""}${updatedAt ? " · updated " + new Date(updatedAt).toLocaleTimeString() : ""}`;
 }
 showSable.addEventListener("change", () => {
   sableVisible = showSable.checked;
   localStorage.setItem("radar-show-sable", String(sableVisible));
-  render(players, sableContraptions);
+  render(players, sableContraptions, buildings);
+});
+buildingForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  buildingStatus.textContent = "Saving…";
+  try {
+    const response = await fetch("/api/radar/building", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: buildingName.value, x1: buildingX1.value, z1: buildingZ1.value, x2: buildingX2.value, z2: buildingZ2.value })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Unable to save building");
+    buildingForm.reset();
+    buildingStatus.textContent = "Building added.";
+  } catch (error) {
+    buildingStatus.textContent = error.message;
+  }
+});
+buildingList.addEventListener("click", async event => {
+  const button = event.target.closest(".building-delete");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/radar/building/" + encodeURIComponent(button.dataset.buildingId), { method: "DELETE" });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Unable to remove building");
+  } catch (error) {
+    buildingStatus.textContent = error.message;
+    button.disabled = false;
+  }
 });
 sableList.addEventListener("click", async event => {
   const button = event.target.closest(".sable-save");
@@ -125,7 +184,7 @@ sableList.addEventListener("click", async event => {
 
     const sable = sableContraptions.find(item => item.id === id);
     if (sable) sable.name = result.name || null;
-    render(players, sableContraptions, Date.now());
+    render(players, sableContraptions, buildings, Date.now());
   } catch (error) {
     if (status) status.textContent = error.message;
     button.disabled = false;
@@ -149,5 +208,5 @@ map.addEventListener("pointercancel", stopDragging);
 map.addEventListener("wheel", event => { event.preventDefault(); const world = worldAt(event.clientX, event.clientY); view.scale = Math.min(12, Math.max(.15, view.scale * (event.deltaY < 0 ? 1.15 : 1 / 1.15))); const bounds = map.getBoundingClientRect(); view.x = world.x - (event.clientX - bounds.left - bounds.width / 2) / view.scale; view.z = world.z - (event.clientY - bounds.top - bounds.height / 2) / view.scale; renderMap(); }, { passive: false });
 document.getElementById("resetView").addEventListener("click", () => { view = { x: -111, z: 243, scale: 2 }; renderMap(); });
 new ResizeObserver(renderMap).observe(map);
-function connect() { clearTimeout(reconnectTimer); const protocol = location.protocol === "https:" ? "wss" : "ws"; socket = new WebSocket(`${protocol}://${location.host}/ws?role=radar-browser`); socket.onopen = () => { dot.classList.remove("offline"); connection.textContent = "Connected"; }; socket.onclose = () => { dot.classList.add("offline"); connection.textContent = "Disconnected"; reconnectTimer = setTimeout(connect, 2500); }; socket.onmessage = event => { try { const message = JSON.parse(event.data); if (message.type === "radar") render(message.players || [], message.sableContraptions || [], message.updatedAt); } catch {} }; }
+function connect() { clearTimeout(reconnectTimer); const protocol = location.protocol === "https:" ? "wss" : "ws"; socket = new WebSocket(`${protocol}://${location.host}/ws?role=radar-browser`); socket.onopen = () => { dot.classList.remove("offline"); connection.textContent = "Connected"; }; socket.onclose = () => { dot.classList.add("offline"); connection.textContent = "Disconnected"; reconnectTimer = setTimeout(connect, 2500); }; socket.onmessage = event => { try { const message = JSON.parse(event.data); if (message.type === "radar") render(message.players || [], message.sableContraptions || [], message.buildings || [], message.updatedAt); } catch {} }; }
 connect();
