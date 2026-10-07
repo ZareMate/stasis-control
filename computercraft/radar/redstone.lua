@@ -25,7 +25,7 @@ local FLOOR_RELAYS = {
 }
 
 local DOOR_MAIN_OPENER_RELAY =
-    peripheral.wrap("redstone_relay_49")
+    peripheral.wrap("redstone_relay_58")
 
 local DOOR_PORTAL_OPENER_RELAY =
     peripheral.wrap("redstone_relay_51")

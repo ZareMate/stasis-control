@@ -6,9 +6,16 @@ const dot = document.getElementById("dot");
 const connection = document.getElementById("connectionText");
 const meta = document.getElementById("radarMeta");
 const coordinates = document.getElementById("radarCoordinates");
+const showSable = document.getElementById("showSable");
+const sablePanel = document.getElementById("sablePanel");
+const sableLegend = document.getElementById("sableLegend");
+const radarShell = map.closest(".radar-shell");
 let socket, reconnectTimer, players = [], sableContraptions = [];
 let view = { x: -111, z: 243, scale: 2 };
 let drag = null;
+
+let sableVisible = localStorage.getItem("radar-show-sable") !== "false";
+showSable.checked = sableVisible;
 
 function escapeHtml(value) { const node = document.createElement("span"); node.textContent = value; return node.innerHTML; }
 function statusFor(player) { const status = String(player.status || "unknown").toLowerCase(); return ["enemy", "ally", "team", "unknown"].includes(status) ? status : "unknown"; }
@@ -16,7 +23,7 @@ function renderMap() {
   const { width, height } = map.getBoundingClientRect();
   if (!width || !height) return;
   map.querySelectorAll(".radar-player,.radar-sable").forEach(node => node.remove());
-  empty.hidden = players.length > 0 || sableContraptions.length > 0;
+  empty.hidden = players.length > 0 || (sableVisible && sableContraptions.length > 0);
   const grid = Math.max(12, 10 * view.scale);
   const offsetX = width / 2 - ((view.x * view.scale) % grid);
   const offsetZ = height / 2 - ((view.z * view.scale) % grid);
@@ -40,6 +47,7 @@ function renderMap() {
     map.append(point);
   }
 
+  if (!sableVisible) return;
   for (let index = 0; index < sableContraptions.length; index++) {
     const sable = sableContraptions[index];
     const number = sable.number || index + 1;
@@ -60,6 +68,9 @@ function render(nextPlayers, nextSableContraptions, updatedAt) {
   players = nextPlayers;
   sableContraptions = nextSableContraptions;
   renderMap();
+  sablePanel.classList.toggle("sable-hidden", !sableVisible);
+  sableLegend.classList.toggle("sable-hidden", !sableVisible);
+  radarShell.classList.toggle("sable-filtered", !sableVisible);
   list.innerHTML = players.length ? players.map(player => {
     const status = statusFor(player);
     return `<div class="radar-row ${status}"><strong><i></i>${escapeHtml(player.username)}</strong><span>${status.toUpperCase()} · X ${Math.round(player.x)} · Y ${Math.round(player.y)} · Z ${Math.round(player.z)}${player.floor ? " · " + escapeHtml(player.floor) : ""}</span></div>`;
@@ -83,8 +94,13 @@ function render(nextPlayers, nextSableContraptions, updatedAt) {
       '<div class="sable-save-status" aria-live="polite"></div>' +
       '</div>';
   }).join("") : '<div class="empty-log">No SABLE contraptions detected.</div>';
-    meta.textContent = `${players.length} player${players.length === 1 ? "" : "s"} · ${sableContraptions.length} SABLE${sableContraptions.length === 1 ? "" : "s"}${updatedAt ? " · updated " + new Date(updatedAt).toLocaleTimeString() : ""}`;
+  meta.textContent = `${players.length} player${players.length === 1 ? "" : "s"}${sableVisible ? ` · ${sableContraptions.length} SABLE${sableContraptions.length === 1 ? "" : "s"}` : ""}${updatedAt ? " · updated " + new Date(updatedAt).toLocaleTimeString() : ""}`;
 }
+showSable.addEventListener("change", () => {
+  sableVisible = showSable.checked;
+  localStorage.setItem("radar-show-sable", String(sableVisible));
+  render(players, sableContraptions);
+});
 sableList.addEventListener("click", async event => {
   const button = event.target.closest(".sable-save");
   if (!button || button.disabled) return;
