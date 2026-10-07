@@ -30,6 +30,7 @@ const roadList = document.getElementById("roadList");
 const roadStatus = document.getElementById("roadStatus");
 const roadSubmit = document.getElementById("roadSubmit");
 let socket, reconnectTimer, players = [], sableContraptions = [], buildings = [], roads = [];
+let radarSignalReceived = false;
 let view = { x: -111, z: 243, scale: 2 };
 let drag = null;
 
@@ -323,7 +324,17 @@ function renderMap() {
   const { width, height } = map.getBoundingClientRect();
   if (!width || !height) return;
   map.querySelectorAll(".radar-player,.radar-sable,.radar-building,.radar-road").forEach(node => node.remove());
-  empty.hidden = players.length > 0 || buildings.length > 0 || roads.length > 0 || (sableVisible && sableContraptions.length > 0);
+  const hasVisibleRadarData =
+    players.length > 0 ||
+    buildings.length > 0 ||
+    roads.length > 0 ||
+    (sableVisible && sableContraptions.length > 0);
+
+  empty.hidden = hasVisibleRadarData;
+  empty.textContent = radarSignalReceived
+    ? "No radar contacts."
+    : "Waiting for radar data…";
+  empty.style.display = hasVisibleRadarData ? "none" : "grid";
   const grid = Math.max(12, 10 * view.scale);
   const offsetX = width / 2 - ((view.x * view.scale) % grid);
   const offsetZ = height / 2 - ((view.z * view.scale) % grid);
@@ -622,5 +633,8 @@ map.addEventListener("pointercancel", stopDragging);
 map.addEventListener("wheel", event => { event.preventDefault(); const world = worldAt(event.clientX, event.clientY); view.scale = Math.min(12, Math.max(.15, view.scale * (event.deltaY < 0 ? 1.15 : 1 / 1.15))); const bounds = map.getBoundingClientRect(); view.x = world.x - (event.clientX - bounds.left - bounds.width / 2) / view.scale; view.z = world.z - (event.clientY - bounds.top - bounds.height / 2) / view.scale; renderMap(); }, { passive: false });
 document.getElementById("resetView").addEventListener("click", () => { view = { x: -111, z: 243, scale: 2 }; renderMap(); });
 new ResizeObserver(renderMap).observe(map);
-function connect() { clearTimeout(reconnectTimer); const protocol = location.protocol === "https:" ? "wss" : "ws"; socket = new WebSocket(`${protocol}://${location.host}/ws?role=radar-browser`); socket.onopen = () => { dot.classList.remove("offline"); connection.textContent = "Connected"; }; socket.onclose = () => { dot.classList.add("offline"); connection.textContent = "Disconnected"; reconnectTimer = setTimeout(connect, 2500); }; socket.onmessage = event => { try { const message = JSON.parse(event.data); if (message.type === "radar") render(message.players || [], message.sableContraptions || [], message.buildings || [], message.roads || [], message.updatedAt); } catch {} }; }
+function connect() { clearTimeout(reconnectTimer); const protocol = location.protocol === "https:" ? "wss" : "ws"; socket = new WebSocket(`${protocol}://${location.host}/ws?role=radar-browser`); socket.onopen = () => { dot.classList.remove("offline"); connection.textContent = "Connected"; }; socket.onclose = () => { dot.classList.add("offline"); connection.textContent = "Disconnected"; reconnectTimer = setTimeout(connect, 2500); }; socket.onmessage = event => { try { const message = JSON.parse(event.data); if (message.type === "radar") {
+  radarSignalReceived = true;
+  render(message.players || [], message.sableContraptions || [], message.buildings || [], message.roads || [], message.updatedAt);
+} } catch {} }; }
 connect();
