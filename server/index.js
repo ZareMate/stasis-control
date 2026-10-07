@@ -315,10 +315,10 @@ function loadRadarBuildings() {
 
 function normalizeRadarBuilding(building) {
   if (!building || typeof building.id !== "string" || typeof building.name !== "string") return null;
-  const x1 = Number.isFinite(building.x1) ? building.x1 : building.x;
-  const z1 = Number.isFinite(building.z1) ? building.z1 : building.z;
-  const x2 = Number.isFinite(building.x2) ? building.x2 : x1;
-  const z2 = Number.isFinite(building.z2) ? building.z2 : z1;
+  const x1 = Number.isFinite(building.x1) ? Math.round(building.x1) : building.x;
+  const z1 = Number.isFinite(building.z1) ? Math.round(building.z1) : building.z;
+  const x2 = Number.isFinite(building.x2) ? Math.round(building.x2) : x1;
+  const z2 = Number.isFinite(building.z2) ? Math.round(building.z2) : z1;
   return Number.isFinite(x1) && Number.isFinite(z1) && Number.isFinite(x2) && Number.isFinite(z2)
     ? { id: building.id, name: building.name, x1, z1, x2, z2 }
     : null;
@@ -336,7 +336,9 @@ function loadRadarRoads() {
 function normalizeRadarRoad(road) {
   if (!road || typeof road.id !== "string") return null;
   const { x1, z1, x2, z2 } = road;
-  return [x1, z1, x2, z2].every(Number.isFinite) ? { id: road.id, x1, z1, x2, z2 } : null;
+  return [x1, z1, x2, z2].every(Number.isFinite)
+    ? { id: road.id, x1: Math.round(x1), z1: Math.round(z1), x2: Math.round(x2), z2: Math.round(z2) }
+    : null;
 }
 
 let sableNames = loadSableNames();
@@ -1488,10 +1490,10 @@ app.post("/api/radar/sable-name", requireLogin, (req, res) => {
 app.post("/api/radar/building", requireLogin, (req, res) => {
   const id = typeof req.body?.id === "string" ? req.body.id.trim() : "";
   const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
-  const x1 = Number(req.body?.x1);
-  const z1 = Number(req.body?.z1);
-  const x2 = Number(req.body?.x2);
-  const z2 = Number(req.body?.z2);
+  const x1 = Math.round(Number(req.body?.x1));
+  const z1 = Math.round(Number(req.body?.z1));
+  const x2 = Math.round(Number(req.body?.x2));
+  const z2 = Math.round(Number(req.body?.z2));
 
   if (!name || name.length > 40 || ![x1, z1, x2, z2].every(Number.isFinite)) {
     return res.status(400).json({ error: "Building name and two finite X/Z corners are required" });
