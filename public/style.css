@@ -721,3 +721,9 @@ main{
   main,.logs-page{width:calc(100vw - 28px);padding-top:40px}
   .hero{padding-top:28px}
 }
+
+
+/* Keep the application surface filled to the viewport */
+html,body{min-height:100vh}
+body{min-height:100vh;background:#101216}
+main{min-height:calc(100vh - 64px)}
