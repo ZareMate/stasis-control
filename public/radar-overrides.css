@@ -660,3 +660,39 @@ html,body.radar-page{
     grid-template-columns:1fr;
   }
 }
+
+/* Typography */
+.radar-page,
+.radar-page button,
+.radar-page input,
+.radar-page select{
+  font-family:"Inter",ui-sans-serif,system-ui,sans-serif;
+  font-optical-sizing:auto;
+}
+.radar-page{
+  font-feature-settings:"cv02","cv03","cv04","cv11";
+}
+.radar-brand-name,
+.radar-brand-sub,
+.radar-page-title>span,
+.radar-header-note,
+.apple-hero-status,
+.config-button,
+.radar-controls button,
+.editor-heading p,
+.building-form button,
+.road-form button,
+.building-edit,
+.building-delete,
+.road-edit,
+.road-delete{
+  font-family:"Inter",ui-sans-serif,system-ui,sans-serif;
+}
+.apple-hero h2{
+  font-family:"Inter",ui-sans-serif,system-ui,sans-serif;
+  font-weight:700;
+  letter-spacing:-.06em;
+}
+.apple-hero p{
+  font-family:"Inter",ui-sans-serif,system-ui,sans-serif;
+}
