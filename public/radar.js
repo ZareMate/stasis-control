@@ -7,6 +7,15 @@ const connection = document.getElementById("connectionText");
 const meta = document.getElementById("radarMeta");
 const coordinates = document.getElementById("radarCoordinates");
 const showSable = document.getElementById("showSable");
+const showFtbMap = document.getElementById("showFtbMap");
+const ftbMapLayer = document.getElementById("ftbMapLayer");
+const ftbChunksPanel = document.getElementById("ftbChunksPanel");
+const ftbDimension = document.getElementById("ftbDimension");
+const ftbMapFiles = document.getElementById("ftbMapFiles");
+const ftbImportButton = document.getElementById("ftbImportButton");
+const ftbStatus = document.getElementById("ftbStatus");
+const ftbRegionList = document.getElementById("ftbRegionList");
+const ftbRegionCount = document.getElementById("ftbRegionCount");
 const sablePanel = document.getElementById("sablePanel");
 const sableLegend = document.getElementById("sableLegend");
 const radarShell = map.closest(".radar-shell");
@@ -33,12 +42,17 @@ const buildingCount = document.getElementById("buildingCount");
 const roadCount = document.getElementById("roadCount");
 let socket, reconnectTimer, players = [], sableContraptions = [], buildings = [], roads = [];
 let radarCanModify = false;
+let ftbRegions = [];
+let ftbTileCache = new Map();
+let ftbRenderToken = 0;
 let radarSignalReceived = false;
 let view = { x: -111, z: 243, scale: 2 };
 let drag = null;
 
 let sableVisible = localStorage.getItem("radar-show-sable") !== "false";
+let ftbMapVisible = localStorage.getItem("radar-show-ftb-map") !== "false";
 showSable.checked = sableVisible;
+if (showFtbMap) showFtbMap.checked = ftbMapVisible;
 async function loadRadarPermissions() {
   const response = await fetch("/api/auth", { cache: "no-store" });
   const data = await response.json().catch(() => ({}));
@@ -54,6 +68,17 @@ async function loadRadarPermissions() {
   if (editors) {
     editors.hidden = !radarCanModify;
     editors.setAttribute("aria-hidden", String(!radarCanModify));
+  }
+
+  if (ftbChunksPanel) {
+    ftbChunksPanel.hidden = !radarCanModify;
+    ftbChunksPanel.setAttribute("aria-hidden", String(!radarCanModify));
+  }
+
+  if (radarCanModify) {
+    await loadFtbRegions();
+  } else {
+    await loadFtbRegions();
   }
 
   return true;
@@ -343,6 +368,234 @@ function renderRoadCenterlines(width, height) {
   map.append(svg);
 }
 
+function ftbRegionUrl(region, layer) {
+  return "/api/radar/ftbchunks/region/" +
+    encodeURIComponent(region.name) + "/" + layer +
+    "?dimension=" + encodeURIComponent(ftbDimension?.value?.trim() || "minecraft:overworld");
+}
+
+function imageFromUrl(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Unable to load FTB Chunks image"));
+    image.src = url;
+  });
+}
+
+async function buildFtbTile(region) {
+  const dimension = ftbDimension?.value?.trim() || "minecraft:overworld";
+  const key = dimension + "|" + region.name;
+  const cached = ftbTileCache.get(key);
+  if (cached) return cached;
+
+  const promise = Promise.all([
+    imageFromUrl(ftbRegionUrl(region, "grass")),
+    imageFromUrl(ftbRegionUrl(region, "foliage")),
+    imageFromUrl(ftbRegionUrl(region, "water")),
+    imageFromUrl(ftbRegionUrl(region, "data"))
+  ]).then(([grass, foliage, water, data]) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 512;
+    canvas.className = "radar-ftb-tile";
+    canvas.setAttribute("aria-hidden", "true");
+
+    const contexts = [grass, foliage, water, data].map(() => {
+      const buffer = document.createElement("canvas");
+      buffer.width = 512;
+      buffer.height = 512;
+      return buffer;
+    });
+
+    const sources = [grass, foliage, water, data];
+    const pixels = [];
+    for (let index = 0; index < contexts.length; index++) {
+      const context = contexts[index].getContext("2d", { willReadFrequently: true });
+      context.drawImage(sources[index], 0, 0, 512, 512);
+      pixels.push(context.getImageData(0, 0, 512, 512).data);
+    }
+
+    const output = canvas.getContext("2d");
+    const image = output.createImageData(512, 512);
+    const grassPixels = pixels[0];
+    const foliagePixels = pixels[1];
+    const waterPixels = pixels[2];
+    const dataPixels = pixels[3];
+
+    for (let offset = 0; offset < image.data.length; offset += 4) {
+      const alpha = Math.max(
+        dataPixels[offset],
+        dataPixels[offset + 1],
+        dataPixels[offset + 2]
+      );
+
+      if (alpha < 2) continue;
+
+      const gr = grassPixels[offset];
+      const gg = grassPixels[offset + 1];
+      const gb = grassPixels[offset + 2];
+      const fr = foliagePixels[offset];
+      const fg = foliagePixels[offset + 1];
+      const fb = foliagePixels[offset + 2];
+      const wr = waterPixels[offset];
+      const wg = waterPixels[offset + 1];
+      const wb = waterPixels[offset + 2];
+
+      // FTB stores separate biome-tinted layers rather than a single final
+      // browser-ready map tile. Combine the foliage/grass colors and use the
+      // strongly-blue water layer where it represents water.
+      const waterLike = wb > wg + 38 && wb > wr + 55;
+      let red = (gr * 0.7) + (fr * 0.3);
+      let green = (gg * 0.7) + (fg * 0.3);
+      let blue = (gb * 0.7) + (fb * 0.3);
+
+      if (waterLike) {
+        red = wr;
+        green = wg;
+        blue = wb;
+      }
+
+      const heightShade = 0.82 + (dataPixels[offset] / 255) * 0.32;
+      image.data[offset] = Math.min(255, Math.round(red * heightShade));
+      image.data[offset + 1] = Math.min(255, Math.round(green * heightShade));
+      image.data[offset + 2] = Math.min(255, Math.round(blue * heightShade));
+      image.data[offset + 3] = 255;
+    }
+
+    output.putImageData(image, 0, 0);
+    return canvas;
+  });
+
+  ftbTileCache.set(key, promise);
+  try {
+    return await promise;
+  } catch (error) {
+    ftbTileCache.delete(key);
+    throw error;
+  }
+}
+
+function renderFtbMap(width, height) {
+  if (!ftbMapLayer) return;
+
+  const token = ++ftbRenderToken;
+  ftbMapLayer.replaceChildren();
+
+  if (!ftbMapVisible || !ftbRegions.length) return;
+
+  const halfWorldWidth = width / (2 * view.scale);
+  const halfWorldHeight = height / (2 * view.scale);
+  const minWorldX = view.x - halfWorldWidth - 512;
+  const maxWorldX = view.x + halfWorldWidth + 512;
+  const minWorldZ = view.z - halfWorldHeight - 512;
+  const maxWorldZ = view.z + halfWorldHeight + 512;
+
+  const visible = ftbRegions.filter(region => {
+    const x = region.x * 512;
+    const z = region.z * 512;
+    return x + 512 >= minWorldX && x <= maxWorldX &&
+      z + 512 >= minWorldZ && z <= maxWorldZ;
+  });
+
+  for (const region of visible) {
+    buildFtbTile(region).then(canvas => {
+      if (token !== ftbRenderToken || !ftbMapVisible) return;
+
+      const x = width / 2 + (region.x * 512 - view.x) * view.scale;
+      const y = height / 2 + (region.z * 512 - view.z) * view.scale;
+
+      canvas.style.left = x + "px";
+      canvas.style.top = y + "px";
+      canvas.style.width = 512 * view.scale + "px";
+      canvas.style.height = 512 * view.scale + "px";
+      ftbMapLayer.append(canvas);
+    }).catch(() => {});
+  }
+}
+
+async function loadFtbRegions() {
+  if (!ftbRegionList) return;
+
+  const dimension = ftbDimension?.value?.trim() || "minecraft:overworld";
+  try {
+    const response = await fetch("/api/radar/ftbchunks?dimension=" + encodeURIComponent(dimension), { cache: "no-store" });
+    if (!response.ok) throw new Error("Unable to load FTB Chunks regions");
+    const data = await response.json();
+    ftbRegions = Array.isArray(data.regions) ? data.regions : [];
+
+    const prefix = dimension + "|";
+    for (const key of [...ftbTileCache.keys()]) {
+      if (!key.startsWith(prefix)) continue;
+      if (!ftbRegions.some(region => key.endsWith("|" + region.name))) ftbTileCache.delete(key);
+    }
+
+    if (ftbRegionCount) ftbRegionCount.textContent = ftbRegions.length;
+    ftbRegionList.innerHTML = ftbRegions.length
+      ? ftbRegions.map(region =>
+        '<div class="road-row ftb-region-row"><div><strong>' +
+        escapeHtml(region.name) +
+        '</strong><span>REGION X ' + region.x + ' · Z ' + region.z + ' · ' +
+        region.chunkCount + ' chunks</span></div>' +
+        (radarCanModify
+          ? '<button class="road-delete ftb-region-delete" type="button" data-region="' +
+            escapeHtml(region.name) + '">REMOVE</button>'
+          : '') +
+        '</div>'
+      ).join("")
+      : '<div class="empty-log">No FTB Chunks regions imported.</div>';
+
+    renderMap();
+  } catch (error) {
+    ftbRegions = [];
+    if (ftbRegionCount) ftbRegionCount.textContent = "0";
+    ftbRegionList.innerHTML = '<div class="empty-log">FTB Chunks map unavailable.</div>';
+    ftbStatus.textContent = error.message;
+    renderMap();
+  }
+}
+
+async function importFtbRegions() {
+  if (!radarCanModify || !ftbMapFiles || !ftbMapFiles.files.length) return;
+
+  const dimension = ftbDimension?.value?.trim() || "minecraft:overworld";
+  ftbImportButton.disabled = true;
+  ftbStatus.textContent = "Importing…";
+
+  try {
+    for (const file of ftbMapFiles.files) {
+      const match = file.name.match(/([0-9a-f]{5}-[0-9a-f]{5})/i);
+      if (!match) throw new Error("Could not find an FTB region name in " + file.name);
+
+      const region = match[1].toUpperCase();
+      const response = await fetch(
+        "/api/radar/ftbchunks/import?dimension=" +
+        encodeURIComponent(dimension) + "&region=" + encodeURIComponent(region),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/zip",
+            "X-FTBChunks-Region": region
+          },
+          body: file
+        }
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Unable to import " + file.name);
+    }
+
+    ftbMapFiles.value = "";
+    ftbTileCache = new Map();
+    ftbStatus.textContent = "Regions imported.";
+    await loadFtbRegions();
+  } catch (error) {
+    ftbStatus.textContent = error.message;
+  } finally {
+    ftbImportButton.disabled = false;
+  }
+}
+
 function renderMap() {
   const { width, height } = map.getBoundingClientRect();
   if (!width || !height) return;
@@ -477,6 +730,50 @@ function render(nextPlayers, nextSableContraptions, nextBuildings, nextRoads, up
   ).join("") : '<div class="empty-log">No roads defined.</div>';
   meta.textContent = `${players.length} player${players.length === 1 ? "" : "s"}${sableVisible ? ` · ${sableContraptions.length} SABLE${sableContraptions.length === 1 ? "" : "s"}` : ""}${updatedAt ? " · updated " + new Date(updatedAt).toLocaleTimeString() : ""}`;
 }
+if (showFtbMap) {
+  showFtbMap.addEventListener("change", () => {
+    ftbMapVisible = showFtbMap.checked;
+    localStorage.setItem("radar-show-ftb-map", String(ftbMapVisible));
+    renderMap();
+  });
+}
+
+if (ftbImportButton) {
+  ftbImportButton.addEventListener("click", importFtbRegions);
+}
+if (ftbDimension) {
+  ftbDimension.addEventListener("change", () => {
+    ftbTileCache = new Map();
+    loadFtbRegions();
+  });
+}
+
+if (ftbRegionList) {
+  ftbRegionList.addEventListener("click", async event => {
+    const button = event.target.closest(".ftb-region-delete");
+    if (!button || !radarCanModify) return;
+
+    button.disabled = true;
+    const dimension = ftbDimension?.value?.trim() || "minecraft:overworld";
+    try {
+      const response = await fetch(
+        "/api/radar/ftbchunks/region/" +
+        encodeURIComponent(button.dataset.region) +
+        "?dimension=" + encodeURIComponent(dimension),
+        { method: "DELETE" }
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Unable to remove FTB Chunks region");
+      ftbTileCache = new Map();
+      await loadFtbRegions();
+      ftbStatus.textContent = "Region removed.";
+    } catch (error) {
+      ftbStatus.textContent = error.message;
+      button.disabled = false;
+    }
+  });
+}
+
 showSable.addEventListener("change", () => {
   sableVisible = showSable.checked;
   localStorage.setItem("radar-show-sable", String(sableVisible));
