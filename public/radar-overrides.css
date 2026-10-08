@@ -901,7 +901,8 @@ html,body.radar-page{
   width:512px;
   height:512px;
   transform-origin:0 0;
-  image-rendering:auto;
+  image-rendering:pixelated;
+  image-rendering:crisp-edges;
   opacity:1;
   filter:none;
 }
