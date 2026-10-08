@@ -53,6 +53,7 @@ async function loadRadarPermissions() {
   const editors = document.querySelector(".map-editors");
   if (editors) {
     editors.hidden = !radarCanModify;
+    editors.setAttribute("aria-hidden", String(!radarCanModify));
   }
 
   return true;
