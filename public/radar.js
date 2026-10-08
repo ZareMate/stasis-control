@@ -46,6 +46,7 @@ let radarCanModify = false;
 let ftbRegions = [];
 let ftbTileCache = new Map();
 let ftbRenderToken = 0;
+let ftbPalette = { blockByIndex: {}, colors: {}, types: {} };
 let radarSignalReceived = false;
 let view = { x: -111, z: 243, scale: 2 };
 let drag = null;
@@ -54,7 +55,19 @@ let sableVisible = localStorage.getItem("radar-show-sable") !== "false";
 let ftbMapVisible = localStorage.getItem("radar-show-ftb-map") !== "false";
 showSable.checked = sableVisible;
 if (showFtbMap) showFtbMap.checked = ftbMapVisible;
+async function loadFtbPalette() {
+  try {
+    const response = await fetch("/ftbchunks-palette.json?build=2", { cache: "force-cache" });
+    if (!response.ok) throw new Error("Unable to load FTB block palette");
+    const palette = await response.json();
+    if (palette && palette.blockByIndex) ftbPalette = palette;
+  } catch (error) {
+    console.warn("[Radar] FTB block palette unavailable:", error.message);
+  }
+}
+
 async function loadRadarPermissions() {
+  await loadFtbPalette();
   const response = await fetch("/api/auth", { cache: "no-store" });
   const data = await response.json().catch(() => ({}));
 
@@ -385,6 +398,96 @@ function imageFromUrl(url) {
   });
 }
 
+function clampChannel(value) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function parseHexColor(value) {
+  if (typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value)) return null;
+  return [
+    parseInt(value.slice(1, 3), 16),
+    parseInt(value.slice(3, 5), 16),
+    parseInt(value.slice(5, 7), 16)
+  ];
+}
+
+function fallbackFtbBlockColor(blockId) {
+  const id = String(blockId || "").toLowerCase();
+  const path = id.includes(":") ? id.split(":")[1] : id;
+
+  const colors = {
+    water: [63, 118, 228],
+    flowing_water: [63, 118, 228],
+    lava: [207, 96, 46],
+    stone: [140, 140, 140],
+    cobblestone: [122, 122, 122],
+    deepslate: [78, 78, 78],
+    tuff: [108, 112, 102],
+    calcite: [224, 224, 219],
+    diorite: [194, 194, 194],
+    granite: [149, 103, 90],
+    dirt: [128, 92, 60],
+    coarse_dirt: [112, 78, 51],
+    rooted_dirt: [125, 89, 64],
+    clay: [159, 164, 177],
+    gravel: [119, 112, 109],
+    sand: [245, 231, 164],
+    red_sand: [187, 95, 45],
+    sandstone: [223, 215, 173],
+    snow: [239, 239, 239],
+    snow_block: [239, 239, 239],
+    powder_snow: [232, 241, 249],
+    ice: [145, 182, 247],
+    packed_ice: [145, 182, 247],
+    blue_ice: [145, 182, 247],
+    grass_block: [100, 150, 75],
+    podzol: [110, 87, 54],
+    mycelium: [104, 82, 96],
+    moss_block: [104, 130, 79],
+    bedrock: [55, 55, 55],
+    obsidian: [21, 0, 71],
+    netherrack: [122, 53, 53],
+    end_stone: [177, 173, 113],
+    bricks: [174, 96, 75],
+    nether_bricks: [46, 23, 27],
+    quartz_block: [235, 229, 220],
+    blackstone: [56, 50, 59],
+    basalt: [80, 80, 84],
+    polished_basalt: [90, 90, 94],
+    prismarine: [82, 142, 135],
+    sea_lantern: [170, 220, 210]
+  };
+
+  if (colors[path]) return colors[path];
+
+  if (/\b(log|wood|planks|stem|hyphae)\b/.test(path)) {
+    if (path.includes("dark_oak")) return [81, 45, 20];
+    if (path.includes("spruce")) return [124, 94, 46];
+    if (path.includes("birch")) return [242, 224, 147];
+    if (path.includes("jungle")) return [198, 118, 83];
+    if (path.includes("acacia")) return [224, 127, 62];
+    if (path.includes("cherry")) return [190, 127, 117];
+    return [150, 107, 62];
+  }
+
+  if (/leaves|leaf|vine/.test(path)) return [70, 100, 55];
+  if (/sand/.test(path)) return [220, 190, 130];
+  if (/stone|rock/.test(path)) return [128, 128, 128];
+  if (/brick/.test(path)) return [155, 90, 75];
+  if (/concrete|wool|terracotta/.test(path)) return [130, 130, 130];
+
+  return [128, 128, 128];
+}
+
+function ftbTint(base, tint, alpha) {
+  const a = Math.max(0, Math.min(1, alpha));
+  return [
+    base[0] + (tint[0] - base[0]) * a,
+    base[1] + (tint[1] - base[1]) * a,
+    base[2] + (tint[2] - base[2]) * a
+  ];
+}
+
 async function buildFtbTile(region) {
   const dimension = ftbDimension?.value?.trim() || "minecraft:overworld";
   const key = dimension + "|" + region.name;
@@ -425,22 +528,21 @@ async function buildFtbTile(region) {
     const context = canvas.getContext("2d");
     const output = context.createImageData(width, height);
 
-    // FTB's cached data.png is not an alpha image. It packs:
-    //   R/G = 16-bit surface height
-    //   B/A = water + light + biome id
-    // blocks.png packs a 24-bit block-color index into RGB.
     for (let offset = 0; offset < output.data.length; offset += 4) {
-      const heightValue = (dataPixels[offset] << 8) | dataPixels[offset + 1];
-      const packed = (dataPixels[offset + 2] << 8) | dataPixels[offset + 3];
-      const hasWater = (packed & 0x8000) !== 0;
-      const light = (packed >> 11) & 0x0f;
-      const blockIndex =
-        (blockPixels[offset] << 16) |
-        (blockPixels[offset + 1] << 8) |
-        blockPixels[offset + 2];
+      const packedWaterLightBiome = (dataPixels[offset + 2] << 8) | dataPixels[offset + 3];
+      const hasWater = (packedWaterLightBiome & 0x8000) !== 0;
+      const light = (packedWaterLightBiome >> 11) & 0x0f;
 
-      const known = blockIndex !== 0;
-      if (!known) {
+      const blockIndexHex =
+        blockPixels[offset].toString(16).padStart(2, "0") +
+        blockPixels[offset + 1].toString(16).padStart(2, "0") +
+        blockPixels[offset + 2].toString(16).padStart(2, "0");
+
+      const blockId = ftbPalette.blockByIndex[blockIndexHex.toUpperCase()];
+      const type = blockId ? ftbPalette.types[blockId] : null;
+      let base;
+
+      if (!blockId || type === "ignored" || blockId === "minecraft:air") {
         output.data[offset] = 0;
         output.data[offset + 1] = 0;
         output.data[offset + 2] = 0;
@@ -448,51 +550,52 @@ async function buildFtbTile(region) {
         continue;
       }
 
-      const gx = grassPixels[offset];
-      const gy = grassPixels[offset + 1];
-      const gz = grassPixels[offset + 2];
-      const fx = foliagePixels[offset];
-      const fy = foliagePixels[offset + 1];
-      const fz = foliagePixels[offset + 2];
-      const wx = waterPixels[offset];
-      const wy = waterPixels[offset + 1];
-      const wz = waterPixels[offset + 2];
-
-      let red;
-      let green;
-      let blue;
-
-      if (hasWater) {
-        red = wx;
-        green = wy;
-        blue = wz;
+      if (type === "grass") {
+        base = [
+          grassPixels[offset],
+          grassPixels[offset + 1],
+          grassPixels[offset + 2]
+        ];
+      } else if (type === "foliage") {
+        base = [
+          foliagePixels[offset],
+          foliagePixels[offset + 1],
+          foliagePixels[offset + 2]
+        ];
       } else {
-        // Both biome-color images are cached for every surface pixel. Use the
-        // average as the broad biome tone and preserve the original colors.
-        red = Math.round((gx + fx) * 0.5);
-        green = Math.round((gy + fy) * 0.5);
-        blue = Math.round((gz + fz) * 0.5);
-
-        // Some blocks have no visible grass/foliage tint. Give them a neutral
-        // terrain tone derived from height so stone/sand/etc. remain visible.
-        if (red + green + blue < 9) {
-          const heightTone = Math.max(0, Math.min(1, (heightValue - 50) / 300));
-          red = Math.round(55 + heightTone * 45);
-          green = Math.round(58 + heightTone * 43);
-          blue = Math.round(62 + heightTone * 38);
-        }
+        base =
+          parseHexColor(ftbPalette.colors[blockId]) ||
+          fallbackFtbBlockColor(blockId);
       }
 
-      // Reproduce FTB's light response enough to keep cliffs and terrain shape
-      // readable without requiring the Minecraft client renderer.
-      const brightness = 0.68 + (light / 15) * 0.42;
-      red = Math.min(255, Math.max(0, Math.round(red * brightness)));
-      green = Math.min(255, Math.max(0, Math.round(green * brightness)));
-      blue = Math.min(255, Math.max(0, Math.round(blue * brightness)));
+      if (hasWater) {
+        const waterColor = [
+          waterPixels[offset],
+          waterPixels[offset + 1],
+          waterPixels[offset + 2]
+        ];
+        base = ftbTint(base, waterColor, 220 / 255);
+      }
 
-      output.data[offset] = red;
-      output.data[offset + 1] = green;
-      output.data[offset + 2] = blue;
+      // FTB applies map lighting to the final block color. The cached height is
+      // also used for terrain relief; a lightweight neighbor comparison gives
+      // the browser map the same readable topographic character.
+      const x = (offset / 4) % 512;
+      const y = Math.floor((offset / 4) / 512);
+      const prev = Math.max(0, offset - 4);
+      const north = y > 0 ? offset - 512 * 4 : offset;
+
+      const height = (dataPixels[offset] << 8) | dataPixels[offset + 1];
+      const westHeight = (dataPixels[prev] << 8) | dataPixels[prev + 1];
+      const northHeight = (dataPixels[north] << 8) | dataPixels[north + 1];
+
+      let brightness = 0.9 + (light / 15) * 0.18;
+      if (height > northHeight || height > westHeight) brightness += 0.05;
+      if (height < northHeight || height < westHeight) brightness -= 0.05;
+
+      output.data[offset] = clampChannel(base[0] * brightness);
+      output.data[offset + 1] = clampChannel(base[1] * brightness);
+      output.data[offset + 2] = clampChannel(base[2] * brightness);
       output.data[offset + 3] = 255;
     }
 
