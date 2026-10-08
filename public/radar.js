@@ -395,77 +395,108 @@ async function buildFtbTile(region) {
     imageFromUrl(ftbRegionUrl(region, "grass")),
     imageFromUrl(ftbRegionUrl(region, "foliage")),
     imageFromUrl(ftbRegionUrl(region, "water")),
-    imageFromUrl(ftbRegionUrl(region, "data"))
-  ]).then(([grass, foliage, water, data]) => {
+    imageFromUrl(ftbRegionUrl(region, "data")),
+    imageFromUrl(ftbRegionUrl(region, "blocks"))
+  ]).then(([grass, foliage, water, data, blocks]) => {
+    const width = 512;
+    const height = 512;
+
+    const readPixels = source => {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      context.drawImage(source, 0, 0, width, height);
+      return context.getImageData(0, 0, width, height).data;
+    };
+
+    const grassPixels = readPixels(grass);
+    const foliagePixels = readPixels(foliage);
+    const waterPixels = readPixels(water);
+    const dataPixels = readPixels(data);
+    const blockPixels = readPixels(blocks);
+
     const canvas = document.createElement("canvas");
-    canvas.width = 512;
-    canvas.height = 512;
+    canvas.width = width;
+    canvas.height = height;
     canvas.className = "radar-ftb-tile";
     canvas.setAttribute("aria-hidden", "true");
 
-    const contexts = [grass, foliage, water, data].map(() => {
-      const buffer = document.createElement("canvas");
-      buffer.width = 512;
-      buffer.height = 512;
-      return buffer;
-    });
+    const context = canvas.getContext("2d");
+    const output = context.createImageData(width, height);
 
-    const sources = [grass, foliage, water, data];
-    const pixels = [];
-    for (let index = 0; index < contexts.length; index++) {
-      const context = contexts[index].getContext("2d", { willReadFrequently: true });
-      context.drawImage(sources[index], 0, 0, 512, 512);
-      pixels.push(context.getImageData(0, 0, 512, 512).data);
-    }
+    // FTB's cached data.png is not an alpha image. It packs:
+    //   R/G = 16-bit surface height
+    //   B/A = water + light + biome id
+    // blocks.png packs a 24-bit block-color index into RGB.
+    for (let offset = 0; offset < output.data.length; offset += 4) {
+      const heightValue = (dataPixels[offset] << 8) | dataPixels[offset + 1];
+      const packed = (dataPixels[offset + 2] << 8) | dataPixels[offset + 3];
+      const hasWater = (packed & 0x8000) !== 0;
+      const light = (packed >> 11) & 0x0f;
+      const blockIndex =
+        (blockPixels[offset] << 16) |
+        (blockPixels[offset + 1] << 8) |
+        blockPixels[offset + 2];
 
-    const output = canvas.getContext("2d");
-    const image = output.createImageData(512, 512);
-    const grassPixels = pixels[0];
-    const foliagePixels = pixels[1];
-    const waterPixels = pixels[2];
-    const dataPixels = pixels[3];
-
-    for (let offset = 0; offset < image.data.length; offset += 4) {
-      const alpha = Math.max(
-        dataPixels[offset],
-        dataPixels[offset + 1],
-        dataPixels[offset + 2]
-      );
-
-      if (alpha < 2) continue;
-
-      const gr = grassPixels[offset];
-      const gg = grassPixels[offset + 1];
-      const gb = grassPixels[offset + 2];
-      const fr = foliagePixels[offset];
-      const fg = foliagePixels[offset + 1];
-      const fb = foliagePixels[offset + 2];
-      const wr = waterPixels[offset];
-      const wg = waterPixels[offset + 1];
-      const wb = waterPixels[offset + 2];
-
-      // FTB stores separate biome-tinted layers rather than a single final
-      // browser-ready map tile. Combine the foliage/grass colors and use the
-      // strongly-blue water layer where it represents water.
-      const waterLike = wb > wg + 38 && wb > wr + 55;
-      let red = (gr * 0.7) + (fr * 0.3);
-      let green = (gg * 0.7) + (fg * 0.3);
-      let blue = (gb * 0.7) + (fb * 0.3);
-
-      if (waterLike) {
-        red = wr;
-        green = wg;
-        blue = wb;
+      const known = blockIndex !== 0;
+      if (!known) {
+        output.data[offset] = 0;
+        output.data[offset + 1] = 0;
+        output.data[offset + 2] = 0;
+        output.data[offset + 3] = 0;
+        continue;
       }
 
-      const heightShade = 0.82 + (dataPixels[offset] / 255) * 0.32;
-      image.data[offset] = Math.min(255, Math.round(red * heightShade));
-      image.data[offset + 1] = Math.min(255, Math.round(green * heightShade));
-      image.data[offset + 2] = Math.min(255, Math.round(blue * heightShade));
-      image.data[offset + 3] = 255;
+      const gx = grassPixels[offset];
+      const gy = grassPixels[offset + 1];
+      const gz = grassPixels[offset + 2];
+      const fx = foliagePixels[offset];
+      const fy = foliagePixels[offset + 1];
+      const fz = foliagePixels[offset + 2];
+      const wx = waterPixels[offset];
+      const wy = waterPixels[offset + 1];
+      const wz = waterPixels[offset + 2];
+
+      let red;
+      let green;
+      let blue;
+
+      if (hasWater) {
+        red = wx;
+        green = wy;
+        blue = wz;
+      } else {
+        // Both biome-color images are cached for every surface pixel. Use the
+        // average as the broad biome tone and preserve the original colors.
+        red = Math.round((gx + fx) * 0.5);
+        green = Math.round((gy + fy) * 0.5);
+        blue = Math.round((gz + fz) * 0.5);
+
+        // Some blocks have no visible grass/foliage tint. Give them a neutral
+        // terrain tone derived from height so stone/sand/etc. remain visible.
+        if (red + green + blue < 9) {
+          const heightTone = Math.max(0, Math.min(1, (heightValue - 50) / 300));
+          red = Math.round(55 + heightTone * 45);
+          green = Math.round(58 + heightTone * 43);
+          blue = Math.round(62 + heightTone * 38);
+        }
+      }
+
+      // Reproduce FTB's light response enough to keep cliffs and terrain shape
+      // readable without requiring the Minecraft client renderer.
+      const brightness = 0.68 + (light / 15) * 0.42;
+      red = Math.min(255, Math.max(0, Math.round(red * brightness)));
+      green = Math.min(255, Math.max(0, Math.round(green * brightness)));
+      blue = Math.min(255, Math.max(0, Math.round(blue * brightness)));
+
+      output.data[offset] = red;
+      output.data[offset + 1] = green;
+      output.data[offset + 2] = blue;
+      output.data[offset + 3] = 255;
     }
 
-    output.putImageData(image, 0, 0);
+    context.putImageData(output, 0, 0);
     return canvas;
   });
 
@@ -474,10 +505,10 @@ async function buildFtbTile(region) {
     return await promise;
   } catch (error) {
     ftbTileCache.delete(key);
+    console.error("[Radar] FTB Chunks tile failed:", region.name, error);
     throw error;
   }
 }
-
 function renderFtbMap(width, height) {
   if (!ftbMapLayer) return;
 
