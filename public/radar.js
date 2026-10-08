@@ -539,10 +539,10 @@ async function buildFtbTile(region) {
         blockPixels[offset + 2].toString(16).padStart(2, "0");
 
       const blockId = ftbPalette.blockByIndex[blockIndexHex.toUpperCase()];
-      const type = blockId ? ftbPalette.types[blockId] : null;
+      const customType = blockId ? ftbPalette.types[blockId] : null;
       let base;
 
-      if (!blockId || type === "ignored" || blockId === "minecraft:air") {
+      if (!blockId || customType === "ignored" || blockId === "minecraft:air" || blockId === "minecraft:void_air") {
         output.data[offset] = 0;
         output.data[offset + 1] = 0;
         output.data[offset + 2] = 0;
@@ -550,18 +550,29 @@ async function buildFtbTile(region) {
         continue;
       }
 
-      if (type === "grass") {
+      // ColorMapLoader applies explicit ftbchunks_block_colors entries first.
+      // Its built-in defaults then classify grass blocks as biome grass, leaves
+      // and vines as biome foliage, rails as gray, and flower pots as brown.
+      if (customType === "grass" || (/_grass_block$/.test(blockId) && !ftbPalette.colors[blockId])) {
         base = [
           grassPixels[offset],
           grassPixels[offset + 1],
           grassPixels[offset + 2]
         ];
-      } else if (type === "foliage") {
+        const darkness = 50 / 255;
+        base = base.map(channel => channel * (1 - darkness));
+      } else if (customType === "foliage" || (/(^|:)((.+_)?leaves|vine)$/.test(blockId) && !ftbPalette.colors[blockId])) {
         base = [
           foliagePixels[offset],
           foliagePixels[offset + 1],
           foliagePixels[offset + 2]
         ];
+        const darkness = 50 / 255;
+        base = base.map(channel => channel * (1 - darkness));
+      } else if (blockId.endsWith("_rail") || /:(powered_rail|detector_rail|activator_rail)$/.test(blockId)) {
+        base = [136, 136, 136];
+      } else if (blockId.endsWith("flower_pot")) {
+        base = [104, 58, 45];
       } else {
         base =
           parseHexColor(ftbPalette.colors[blockId]) ||
@@ -577,25 +588,31 @@ async function buildFtbTile(region) {
         base = ftbTint(base, waterColor, 220 / 255);
       }
 
-      // FTB applies map lighting to the final block color. The cached height is
-      // also used for terrain relief; a lightweight neighbor comparison gives
-      // the browser map the same readable topographic character.
-      const x = (offset / 4) % 512;
-      const y = Math.floor((offset / 4) / 512);
-      const prev = Math.max(0, offset - 4);
-      const north = y > 0 ? offset - 512 * 4 : offset;
+      // In FTB's normal map mode, light level is not used to brighten terrain.
+      // Instead it adds a small deterministic noise and height-based shadow.
+      const pixelIndex = offset / 4;
+      const px = pixelIndex % 512;
+      const py = Math.floor(pixelIndex / 512);
+      const west = py >= 0 && px > 0 ? offset - 4 : offset;
+      const north = py > 0 ? offset - 512 * 4 : offset;
 
       const height = (dataPixels[offset] << 8) | dataPixels[offset + 1];
-      const westHeight = (dataPixels[prev] << 8) | dataPixels[prev + 1];
+      const westHeight = (dataPixels[west] << 8) | dataPixels[west + 1];
       const northHeight = (dataPixels[north] << 8) | dataPixels[north + 1];
 
-      let brightness = 0.9 + (light / 15) * 0.18;
-      if (height > northHeight || height > westHeight) brightness += 0.05;
-      if (height < northHeight || height < westHeight) brightness -= 0.05;
+      let addedBrightness = 0;
+      const shadow = 0.1 * (hasWater ? 0.6 : 1);
+      if (height > northHeight || height > westHeight) addedBrightness += shadow;
+      if (height < northHeight || height < westHeight) addedBrightness -= shadow;
 
-      output.data[offset] = clampChannel(base[0] * brightness);
-      output.data[offset + 1] = clampChannel(base[1] * brightness);
-      output.data[offset + 2] = clampChannel(base[2] * brightness);
+      // Match FTB's default noise range of ±0.025.
+      const hash = Math.sin((px + region.x * 512) * 12.9898 + (py + region.z * 512) * 78.233) * 43758.5453;
+      const noise = (hash - Math.floor(hash)) * 0.05 - 0.025;
+      addedBrightness += noise;
+
+      output.data[offset] = clampChannel(base[0] + addedBrightness * 255);
+      output.data[offset + 1] = clampChannel(base[1] + addedBrightness * 255);
+      output.data[offset + 2] = clampChannel(base[2] + addedBrightness * 255);
       output.data[offset + 3] = 255;
     }
 
