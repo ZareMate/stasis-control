@@ -152,7 +152,7 @@ function localTestSession(req) {
 }
 
 function requestSession(req) {
-  return sessionFor(req) || localTestSession(req);
+  return localTestSession(req) || sessionFor(req);
 }
 
 function sessionUser(req) {
