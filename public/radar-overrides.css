@@ -1,3 +1,80 @@
 .radar-building{border-color:#6b6257;background:#6b625726;box-shadow:0 0 10px #6b6257;color:#6b6257}.building-form input:focus{border-color:#6b6257}.building-form button,.building-edit,.building-delete{border-color:#6b6257;color:#a89d8e}.building-form button:hover,.building-edit:hover,.building-delete:hover{background:#6b6257}.building-row{border-left-color:#6b6257}.building-actions{display:flex;gap:5px}.building-edit{padding:6px;border:1px solid #6b6257;background:transparent;font-size:9px;font-weight:800;letter-spacing:.08em;cursor:pointer}
 
 .radar-road{background:#3f4245;box-shadow:none}.road-form input:focus{border-color:#3f4245}.road-form button,.road-edit,.road-delete{border-color:#3f4245;color:#aeb3b8}.road-form button:hover,.road-edit:hover,.road-delete:hover{background:#3f4245}.road-row{border-left-color:#3f4245}
+
+/* Product UI refresh */
+.radar-page{background:#0b0d0d}
+.radar-topbar{height:64px;padding:0 28px;background:#101211;border-bottom:1px solid #252927;box-shadow:0 3px 16px #0008}
+.radar-brand{display:flex;align-items:center;gap:10px}
+.radar-brand-mark{display:grid;place-items:center;width:29px;height:29px;border:1px solid #7e6a45;background:#171613;color:#e0a039;font:800 10px/1 ui-monospace,SFMono-Regular,monospace;letter-spacing:.05em}
+.radar-brand-name{color:#f1eee8;font:800 12px/1.1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.12em}
+.radar-brand-sub{margin-top:3px;color:#797d78;font:700 8px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.12em}
+.radar-connection{padding-right:14px;border-right:1px solid #292d2b}
+.radar-main{width:min(1440px,calc(100vw - 48px));padding:26px 0 48px}
+.radar-heading{margin-bottom:12px;align-items:end}
+.radar-heading h2{margin:6px 0 0;color:#eef0ed;font-size:25px;line-height:1.1;font-weight:650;letter-spacing:-.02em}
+.radar-page-title{display:flex;align-items:center;gap:10px}
+.radar-page-title>span{color:#7f847f;font:700 9px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.16em}
+.radar-page-title>strong{padding:3px 7px;border:1px solid #2e342f;background:#121513;color:#9ca69d;font:700 9px/1 ui-monospace,SFMono-Regular,monospace;letter-spacing:.03em}
+.radar-header-note{color:#616662;font:700 9px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.12em}
+.radar-meta{font:700 9px/1 ui-monospace,SFMono-Regular,monospace}
+.radar-shell{grid-template-columns:minmax(0,1fr) 244px 270px;gap:10px}
+.radar-map{min-height:700px;border:1px solid #2a2f2d;background-color:#0e1110;background-image:linear-gradient(#ffffff06 1px,transparent 1px),linear-gradient(90deg,#ffffff06 1px,transparent 1px),linear-gradient(#c18d3910 1px,transparent 1px),linear-gradient(90deg,#c18d3910 1px,transparent 1px);box-shadow:inset 0 0 0 1px #0008,0 10px 30px #0007}
+.radar-map:before,.radar-map:after{background:#8a6d3938}
+.radar-controls,.radar-legend{border:1px solid #292e2b;background:#111413ee;box-shadow:0 5px 16px #0008;padding:7px 9px}
+.radar-controls{bottom:10px;right:10px}
+.radar-controls button{border-color:#303632;color:#b7bcb8}
+.radar-controls button:hover{border-color:#8e744a;color:#e0a039;background:#171a18}
+.radar-legend{top:10px;left:10px;gap:9px}
+.radar-legend span{color:#969b97;font-size:9px}
+.radar-shell aside{align-self:stretch;padding:14px;border:1px solid #292e2b;background:#121514;box-shadow:0 6px 22px #0005}
+.radar-shell h3{margin:0 0 10px;color:#dfe2df;font-size:12px;font-weight:700;letter-spacing:.03em}
+.radar-list{gap:5px}
+.radar-row{padding:8px 9px;background:#171b19;border:1px solid #252b28;border-left:2px solid #555b57;font-size:11px;transition:background .12s,border-color .12s}
+.radar-row:hover{background:#1b201d;border-color:#313834}
+.radar-row strong{font-size:11px;font-weight:700;color:#eef0ed}
+.radar-row span{margin-top:4px;font:9px/1.4 ui-monospace,SFMono-Regular,monospace;color:#7f8681}
+.radar-row.enemy{border-left-color:#a96054}.radar-row.unknown{border-left-color:#9b7130}.radar-row.ally{border-left-color:#5f9d79}.radar-row.team{border-left-color:#658aab}
+.radar-player{width:32px;height:32px;border-width:1px;border-radius:2px;box-shadow:0 4px 12px #000c,0 0 8px currentColor}
+.radar-player span{top:33px;left:3px;font-size:9px;font-weight:650}
+.radar-sable{border-width:1px;box-shadow:0 0 8px #c792ea99}
+.radar-sable span{font-size:9px}
+.radar-empty{color:#777d78;font:10px ui-monospace,SFMono-Regular,monospace;letter-spacing:.04em}
+.map-editors{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.map-editor-panel{margin-top:0;padding:14px;border:1px solid #292e2b;background:#121514;box-shadow:0 6px 18px #0004}
+.editor-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.editor-heading h3{margin:0;color:#e4e7e4;font-size:13px;font-weight:700}
+.editor-heading p{margin:3px 0 0;color:#757b76;font:9px ui-monospace,SFMono-Regular,monospace}
+.editor-count{min-width:27px;padding:4px 6px;text-align:center;border:1px solid #2b312e;background:#0f1211;color:#8d948f;font:700 9px ui-monospace,SFMono-Regular,monospace}
+.building-form,.road-form{grid-template-columns:1fr repeat(4,68px) auto;gap:6px;margin-top:0}
+.building-form input,.road-form input{padding:8px 9px;border:1px solid #2b312e;background:#0e1110;color:#e7e9e7;font:10px ui-monospace,SFMono-Regular,monospace}
+.building-form input:focus,.road-form input:focus{border-color:#806943;box-shadow:0 0 0 1px #80694333}
+.building-form button,.road-form button,.building-edit,.building-delete,.road-edit,.road-delete{padding:8px 9px;border:1px solid #343a36;background:#171b19;color:#b8beb9;font:800 8px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.08em}
+.building-form button:hover,.road-form button:hover,.building-edit:hover,.building-delete:hover,.road-edit:hover,.road-delete:hover{background:#202521;border-color:#736043;color:#e0a039}
+.building-list,.road-list{margin-top:9px;max-height:190px;grid-template-columns:1fr;gap:4px}
+.building-row,.road-row{padding:8px 9px;border:1px solid #252b28;border-left-width:2px;background:#171b19}
+.building-row strong,.road-row strong{color:#e5e8e5;font-size:10px;font-weight:700}
+.building-row span,.road-row span{color:#737a75;font:9px ui-monospace,SFMono-Regular,monospace}
+.building-actions,.road-actions{gap:4px}
+.building-status,.road-status{min-height:14px;margin-top:6px;font:9px ui-monospace,SFMono-Regular,monospace;color:#777e79}
+.config-button{padding:8px 10px;border-color:#2f3531;background:#151917;color:#aab0ab}
+.config-button:hover{border-color:#69593f;color:#e0a039;background:#1a1d1b}
+@media(max-width:1100px){
+  .radar-shell{grid-template-columns:minmax(0,1fr) 240px}
+  #sablePanel{grid-column:2}
+  .radar-map{grid-column:1}
+  .map-editors{grid-template-columns:1fr}
+}
+@media(max-width:800px){
+  .radar-topbar{padding:0 14px}
+  .radar-main{width:calc(100vw - 24px);padding-top:18px}
+  .radar-header-note{display:none}
+  .radar-shell{grid-template-columns:1fr}
+  #sablePanel{grid-column:auto}
+  .radar-map{min-height:560px;grid-column:auto}
+  .map-editors{grid-template-columns:1fr}
+  .building-form,.road-form{grid-template-columns:1fr 1fr}
+  .building-form input:first-of-type,.building-form button,.road-form button{grid-column:1/-1}
+  .topbar-actions{gap:8px}
+  .radar-connection{padding-right:8px}
+}
