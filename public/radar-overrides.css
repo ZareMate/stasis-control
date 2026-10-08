@@ -975,3 +975,16 @@ html,body.radar-page{
     width:100%;
   }
 }
+
+
+/* Keep mapped areas and roads proportional when zoomed far out. */
+.radar-road.map-tiny{
+  box-shadow:none;
+}
+.radar-building.map-tiny{
+  border-width:1px;
+  box-shadow:none;
+}
+.radar-building.map-tiny span{
+  display:none;
+}
