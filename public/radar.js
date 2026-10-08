@@ -761,11 +761,16 @@ async function importFtbRegions() {
       );
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || "Unable to import " + file.name);
+
+      const merge = result.merge || {};
+      ftbStatus.textContent = merge.merged
+        ? "Merged " + (merge.updated || 0) + " updated chunks, kept " +
+          (merge.skippedOlder || 0) + " older chunks."
+        : "Imported " + (merge.incomingChunks || 0) + " chunks.";
     }
 
     ftbMapFiles.value = "";
     ftbTileCache = new Map();
-    ftbStatus.textContent = "Regions imported.";
     await loadFtbRegions();
     fitFtbMap();
   } catch (error) {
