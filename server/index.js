@@ -47,12 +47,15 @@ const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI || "";
 const DISCORD_BOT_TOKEN = process.env.DISCORD_TOKEN || "";
 const ACCESS_GUILD_ID = "1543358966300545116";
 const REQUIRED_ROLE_ID = "1552640238168580167";
+const RADAR_VIEW_ROLE_ID = "1543368933464211456";
 const AUTH_COOKIE = "stasis_session";
 const sessions = new Map();
 const oauthStates = new Map();
 const refreshPromises = new WeakMap();
 const roleCheckCache = new Map();
 const roleCheckPromises = new Map();
+const radarRoleCheckCache = new Map();
+const radarRoleCheckPromises = new Map();
 
 try {
   const savedSessions = JSON.parse(fs.readFileSync(DISCORD_SESSIONS_FILE, "utf8"));
@@ -197,7 +200,7 @@ async function userHasRequiredRole(session) {
     }
 
     // Use the bot endpoint as a fallback when the user OAuth endpoint cannot confirm the role.
-    const allowed = await botUserHasRequiredRole(userId);
+    const allowed = await botUserHasRole(userId, REQUIRED_ROLE_ID);
     const checkedAt = Date.now();
     roleCheckCache.set(userId, {
       allowed,
@@ -214,6 +217,85 @@ async function userHasRequiredRole(session) {
   } finally {
     roleCheckPromises.delete(userId);
   }
+}
+
+async function userHasRadarRole(session) {
+  if (!session?.user?.id) return false;
+  const userId = String(session.user.id);
+
+  if (hasRememberedRole(userId)) return true;
+
+  const now = Date.now();
+  const cached = radarRoleCheckCache.get(userId);
+  if (cached && cached.expiresAt > now) return cached.allowed;
+  if (!session.accessToken) return false;
+  if (radarRoleCheckPromises.has(userId)) return radarRoleCheckPromises.get(userId);
+
+  const check = (async () => {
+    await refreshDiscordToken(session);
+
+    try {
+      const response = await fetch(`https://discord.com/api/v10/users/@me/guilds/${ACCESS_GUILD_ID}/member`, {
+        headers: { Authorization: `Bearer ${session.accessToken}` },
+        signal: AbortSignal.timeout(5000)
+      });
+
+      if (response.status === 429) {
+        let retrySeconds = Number(response.headers.get("retry-after")) || 0;
+        const body = await response.json().catch(() => ({}));
+        retrySeconds = Math.max(retrySeconds, Number(body.retry_after) || 0);
+        const retryAt = Date.now() + Math.min(Math.max(retrySeconds, 1), 900) * 1000;
+        const allowed = cached?.allowed === true && cached.staleUntil > Date.now();
+        radarRoleCheckCache.set(userId, {
+          allowed,
+          expiresAt: retryAt,
+          staleUntil: allowed ? cached.staleUntil : retryAt
+        });
+        console.warn(`[Auth] OAuth radar-role lookup rate limited; retrying in ${Math.ceil((retryAt - Date.now()) / 1000)}s`);
+        return allowed;
+      }
+
+      if (response.ok) {
+        const member = await response.json();
+        if (Array.isArray(member.roles) && member.roles.includes(RADAR_VIEW_ROLE_ID)) {
+          const checkedAt = Date.now();
+          radarRoleCheckCache.set(userId, {
+            allowed: true,
+            expiresAt: checkedAt + 5 * 60 * 1000,
+            staleUntil: checkedAt + 30 * 60 * 1000
+          });
+          return true;
+        }
+      } else {
+        console.warn("[Auth] OAuth radar-role lookup returned HTTP", response.status);
+      }
+    } catch (error) {
+      console.error("[Auth] OAuth radar-role lookup failed:", error.message);
+    }
+
+    const allowed = await botUserHasRole(userId, RADAR_VIEW_ROLE_ID);
+    const checkedAt = Date.now();
+    radarRoleCheckCache.set(userId, {
+      allowed,
+      expiresAt: checkedAt + (allowed ? 5 * 60 * 1000 : 30 * 1000),
+      staleUntil: checkedAt + (allowed ? 30 * 60 * 1000 : 30 * 1000)
+    });
+    return allowed;
+  })();
+
+  radarRoleCheckPromises.set(userId, check);
+  try {
+    return await check;
+  } finally {
+    radarRoleCheckPromises.delete(userId);
+  }
+}
+
+async function requireRadarRole(req, res, next) {
+  if (!(await userHasRadarRole(req.discordSession))) {
+    return res.status(403).json({ error: "You need the radar viewer role to access Stasis Radar" });
+  }
+  next();
 }
 
 async function requireGuildRole(req, res, next) {
@@ -691,7 +773,10 @@ app.get("/auth/discord/callback", async (req, res) => {
     saveSessions();
     const secure = req.secure || req.get("x-forwarded-proto") === "https";
     res.setHeader("Set-Cookie", `${AUTH_COOKIE}=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}`);
-    res.redirect(await userHasRequiredRole(session) ? "/" : "/access-denied");
+    const fullAccess = await userHasRequiredRole(session);
+    if (fullAccess) return res.redirect("/");
+    if (await userHasRadarRole(session)) return res.redirect("/radar");
+    return res.redirect("/access-denied");
   } catch (error) {
     console.error("[Auth] Discord login failed:", error.message);
     res.redirect("/access-denied?login=failed");
@@ -702,17 +787,19 @@ app.get("/api/auth", (req, res) => {
   const user = sessionUser(req);
   if (!user) return res.json({ configured: loginConfigured(), user: null, allowed: false });
   const session = sessionFor(req);
-  userHasRequiredRole(session).then(allowed => res.json({
+  Promise.all([userHasRequiredRole(session), userHasRadarRole(session)]).then(([allowed, radarAllowed]) => res.json({
     configured: loginConfigured(),
     user: { id: user.id, username: user.username, avatar: user.avatar },
-    allowed
-  })).catch(() => res.json({ configured: loginConfigured(), user: null, allowed: false }));
+    allowed,
+    radarAllowed,
+    radarCanModify: allowed
+  })).catch(() => res.json({ configured: loginConfigured(), user: null, allowed: false, radarAllowed: false, radarCanModify: false }));
 });
 app.get("/access-denied", (_req, res) => res.sendFile(path.join(ROOT, "views", "access-denied.html")));
 app.get("/radar", async (req, res) => {
   const session = sessionFor(req);
   if (!session) return res.redirect(loginConfigured() ? "/auth/discord" : "/");
-  if (!(await userHasRequiredRole(session))) return res.redirect("/access-denied");
+  if (!(await userHasRadarRole(session))) return res.redirect("/access-denied");
   res.sendFile(path.join(ROOT, "public", "radar.html"));
 });
 app.get("/logs", async (req, res) => {
@@ -1440,11 +1527,11 @@ app.get("/api/state", (_req, res) => {
   res.json(snapshot());
 });
 
-app.get("/api/radar", (_req, res) => {
+app.get("/api/radar", requireLogin, requireRadarRole, (_req, res) => {
   res.json(radarSnapshot());
 });
 
-app.get("/api/radar/sable-names", requireLogin, (req, res) => {
+app.get("/api/radar/sable-names", requireLogin, requireRadarRole, (req, res) => {
   const names = {};
   for (const [id, name] of Object.entries(sableNames)) {
     if (typeof id === "string" && typeof name === "string" && name.trim()) {
@@ -1454,7 +1541,7 @@ app.get("/api/radar/sable-names", requireLogin, (req, res) => {
   res.json({ names });
 });
 
-app.post("/api/radar/sable-name", requireLogin, (req, res) => {
+app.post("/api/radar/sable-name", requireLogin, requireGuildRole, (req, res) => {
   const id = typeof req.body?.id === "string" ? req.body.id.trim() : "";
   const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
 
@@ -1487,7 +1574,7 @@ app.post("/api/radar/sable-name", requireLogin, (req, res) => {
   });
 });
 
-app.post("/api/radar/building", requireLogin, (req, res) => {
+app.post("/api/radar/building", requireLogin, requireGuildRole, (req, res) => {
   const id = typeof req.body?.id === "string" ? req.body.id.trim() : "";
   const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
   const x1 = Math.round(Number(req.body?.x1));
@@ -1515,7 +1602,7 @@ app.post("/api/radar/building", requireLogin, (req, res) => {
   res.json({ ok: true, building });
 });
 
-app.delete("/api/radar/building/:id", requireLogin, (req, res) => {
+app.delete("/api/radar/building/:id", requireLogin, requireGuildRole, (req, res) => {
   const id = String(req.params.id || "").trim();
   const nextBuildings = radarBuildings.filter(building => building.id !== id);
   if (nextBuildings.length === radarBuildings.length) return res.status(404).json({ error: "Building not found" });
@@ -1532,7 +1619,7 @@ app.delete("/api/radar/building/:id", requireLogin, (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/api/radar/road", requireLogin, (req, res) => {
+app.post("/api/radar/road", requireLogin, requireGuildRole, (req, res) => {
   const id = typeof req.body?.id === "string" ? req.body.id.trim() : "";
   const x1 = Math.round(Number(req.body?.x1));
   const z1 = Math.round(Number(req.body?.z1));
@@ -1559,7 +1646,7 @@ app.post("/api/radar/road", requireLogin, (req, res) => {
   res.json({ ok: true, road });
 });
 
-app.delete("/api/radar/road/:id", requireLogin, (req, res) => {
+app.delete("/api/radar/road/:id", requireLogin, requireGuildRole, (req, res) => {
   const id = String(req.params.id || "").trim();
   const nextRoads = radarRoads.filter(road => road.id !== id);
   if (nextRoads.length === radarRoads.length) return res.status(404).json({ error: "Road not found" });
@@ -1712,7 +1799,7 @@ function authorizedComputerRequest(req) {
   );
 }
 
-async function botUserHasRequiredRole(userId) {
+async function botUserHasRole(userId, roleId) {
   if (!DISCORD_BOT_TOKEN || !/^\d+$/.test(String(userId || ""))) return false;
   try {
     const response = await fetch(`https://discord.com/api/v10/guilds/${ACCESS_GUILD_ID}/members/${userId}`, {
@@ -1725,11 +1812,15 @@ async function botUserHasRequiredRole(userId) {
       return false;
     }
     const member = await response.json();
-    return Array.isArray(member.roles) && member.roles.includes(REQUIRED_ROLE_ID);
+    return Array.isArray(member.roles) && member.roles.includes(String(roleId));
   } catch (error) {
     console.error("[Auth] Bot guild role check failed:", error.message);
     return false;
   }
+}
+
+async function botUserHasRequiredRole(userId) {
+  return botUserHasRole(userId, REQUIRED_ROLE_ID);
 }
 
 async function handlePlayerPullRequest(req, res, requirePullToken = true) {
