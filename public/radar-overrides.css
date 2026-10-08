@@ -78,3 +78,178 @@
   .topbar-actions{gap:8px}
   .radar-connection{padding-right:8px}
 }
+
+/* Apple-style interaction and visual refinement */
+:root{
+  --radar-surface:rgba(20,22,21,.82);
+  --radar-surface-strong:rgba(16,18,17,.94);
+  --radar-hairline:rgba(255,255,255,.085);
+  --radar-text:#f5f5f3;
+  --radar-secondary:#a9adaa;
+  --radar-tertiary:#707673;
+}
+.radar-page{
+  color:var(--radar-text);
+  font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;
+  background:
+    radial-gradient(900px 500px at 55% -10%,rgba(224,160,57,.055),transparent 70%),
+    #0b0d0d;
+}
+.radar-topbar{
+  background:rgba(13,15,14,.72);
+  backdrop-filter:saturate(150%) blur(22px);
+  -webkit-backdrop-filter:saturate(150%) blur(22px);
+  border-bottom:1px solid var(--radar-hairline);
+}
+.radar-brand-mark,
+.config-button,
+.editor-count{
+  border-radius:9px;
+}
+.radar-brand-mark{
+  transition:transform 180ms cubic-bezier(.2,.8,.2,1),background-color 180ms ease;
+}
+.radar-brand-mark:active,
+.config-button:active,
+.radar-controls button:active,
+.building-form button:active,
+.road-form button:active,
+.building-edit:active,
+.building-delete:active,
+.road-edit:active,
+.road-delete:active{
+  transform:scale(.97);
+}
+.radar-main{
+  padding-top:24px;
+}
+.radar-heading h2{
+  font-size:clamp(24px,2.1vw,30px);
+  letter-spacing:-.028em;
+  font-weight:650;
+}
+.radar-page-title>span,
+.radar-header-note{
+  letter-spacing:.12em;
+}
+.radar-page-title>strong{
+  border-radius:7px;
+}
+.radar-shell aside,
+.map-editor-panel{
+  background:var(--radar-surface);
+  backdrop-filter:saturate(120%) blur(18px);
+  -webkit-backdrop-filter:saturate(120%) blur(18px);
+  border-color:var(--radar-hairline);
+  border-radius:12px;
+  box-shadow:0 12px 32px rgba(0,0,0,.18);
+}
+.radar-map{
+  border-radius:14px;
+  border-color:var(--radar-hairline);
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.45),0 18px 50px rgba(0,0,0,.25);
+}
+.radar-controls,.radar-legend{
+  background:var(--radar-surface-strong);
+  backdrop-filter:saturate(140%) blur(18px);
+  -webkit-backdrop-filter:saturate(140%) blur(18px);
+  border-color:var(--radar-hairline);
+  border-radius:10px;
+}
+.radar-controls button,
+.config-button,
+.building-form button,
+.road-form button,
+.building-edit,
+.building-delete,
+.road-edit,
+.road-delete{
+  border-radius:8px;
+  transition:transform 100ms ease-out,background-color 160ms ease,border-color 160ms ease,color 160ms ease;
+}
+.radar-row,
+.building-row,
+.road-row,
+.radar-sable-row{
+  border-radius:9px;
+  transition:background-color 160ms ease,border-color 160ms ease,transform 160ms cubic-bezier(.2,.8,.2,1);
+}
+.radar-row:active,
+.building-row:active,
+.road-row:active{
+  transform:scale(.995);
+}
+.building-form input,
+.road-form input,
+.sable-name-input{
+  border-radius:8px;
+  transition:border-color 160ms ease,box-shadow 160ms ease,background-color 160ms ease;
+}
+.building-form input:focus,
+.road-form input:focus,
+.sable-name-input:focus{
+  outline:none;
+  box-shadow:0 0 0 3px rgba(224,160,57,.11);
+}
+.radar-filter input{
+  width:14px;
+  height:14px;
+}
+.radar-player,
+.radar-sable,
+.radar-building,
+.radar-road{
+  will-change:transform;
+}
+.radar-player{
+  transition:filter 120ms ease,box-shadow 160ms ease;
+}
+.radar-player:hover{
+  filter:brightness(1.08);
+}
+.radar-empty{
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  letter-spacing:.01em;
+}
+@media (prefers-reduced-motion: reduce){
+  .radar-brand-mark,
+  .config-button,
+  .radar-controls button,
+  .building-form button,
+  .road-form button,
+  .building-edit,
+  .building-delete,
+  .road-edit,
+  .road-delete,
+  .radar-row,
+  .building-row,
+  .road-row,
+  .radar-sable-row,
+  .radar-player{
+    transition:none !important;
+  }
+}
+@media (prefers-reduced-transparency: reduce){
+  .radar-topbar,
+  .radar-shell aside,
+  .map-editor-panel,
+  .radar-controls,
+  .radar-legend{
+    background:#121514;
+    backdrop-filter:none;
+    -webkit-backdrop-filter:none;
+  }
+}
+@media (prefers-contrast: more){
+  .radar-topbar,
+  .radar-shell aside,
+  .map-editor-panel,
+  .radar-map{
+    border-color:#666c68;
+  }
+  .radar-row,
+  .building-row,
+  .road-row{
+    border-color:#4c534f;
+  }
+}
