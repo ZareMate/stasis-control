@@ -796,7 +796,7 @@ html,body.radar-page{
     linear-gradient(90deg,rgba(27,217,106,.035) 1px,transparent 1px);
   box-shadow:0 14px 36px rgba(0,0,0,.24);
 }
-.radar-map:before,.radar-map:after{background:rgba(27,217,106,.22)}
+.radar-map:before,.radar-map:after{background:rgba(27,217,106,.22);z-index:1}
 .radar-controls,.radar-legend{
   border:1px solid #474c56;
   border-radius:9px;
