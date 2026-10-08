@@ -902,8 +902,8 @@ html,body.radar-page{
   height:512px;
   transform-origin:0 0;
   image-rendering:auto;
-  opacity:.86;
-  filter:saturate(.82) contrast(.96) brightness(.9);
+  opacity:1;
+  filter:none;
 }
 #showFtbMap{
   accent-color:#1bd96a;
