@@ -883,9 +883,9 @@ function render(nextPlayers, nextSableContraptions, nextBuildings, nextRoads, up
   sablePanel.classList.toggle("sable-hidden", !sableVisible);
   sableLegend.classList.toggle("sable-hidden", !sableVisible);
   radarShell.classList.toggle("sable-filtered", !sableVisible);
-  list.innerHTML = players.length ? players.map(player => {
+  list.innerHTML = players.length ? players.map((player, index) => {
     const status = statusFor(player);
-    return `<div class="radar-row ${status}"><strong><i></i>${escapeHtml(player.username)}</strong><span>${status.toUpperCase()} · X ${Math.round(player.x)} · Y ${Math.round(player.y)} · Z ${Math.round(player.z)}${player.floor ? " · " + escapeHtml(player.floor) : ""}</span></div>`;
+    return `<div class="radar-row ${status}" data-player-index="${index}" role="button" tabindex="0" title="Center map on ${escapeHtml(player.username)}"><strong><i></i>${escapeHtml(player.username)}</strong><span>${status.toUpperCase()} · X ${Math.round(player.x)} · Y ${Math.round(player.y)} · Z ${Math.round(player.z)}${player.floor ? " · " + escapeHtml(player.floor) : ""}</span></div>`;
   }).join("") : '<div class="empty-log">No players detected.</div>';
   sableList.innerHTML = sableContraptions.length ? sableContraptions.map((sable, index) => {
     const number = sable.number || index + 1;
@@ -922,6 +922,33 @@ function render(nextPlayers, nextSableContraptions, nextBuildings, nextRoads, up
   ).join("") : '<div class="empty-log">No roads defined.</div>';
   meta.textContent = `${players.length} player${players.length === 1 ? "" : "s"}${sableVisible ? ` · ${sableContraptions.length} SABLE${sableContraptions.length === 1 ? "" : "s"}` : ""}${updatedAt ? " · updated " + new Date(updatedAt).toLocaleTimeString() : ""}`;
 }
+list.addEventListener("click", event => {
+  const row = event.target.closest(".radar-row[data-player-index]");
+  if (!row || !list.contains(row)) return;
+
+  const player = players[Number(row.dataset.playerIndex)];
+  if (!player) return;
+
+  view.x = Number(player.x);
+  view.z = Number(player.z);
+  renderMap();
+});
+
+list.addEventListener("keydown", event => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+
+  const row = event.target.closest(".radar-row[data-player-index]");
+  if (!row || !list.contains(row)) return;
+
+  event.preventDefault();
+  const player = players[Number(row.dataset.playerIndex)];
+  if (!player) return;
+
+  view.x = Number(player.x);
+  view.z = Number(player.z);
+  renderMap();
+});
+
 if (showFtbMap) {
   showFtbMap.addEventListener("change", () => {
     ftbMapVisible = showFtbMap.checked;
