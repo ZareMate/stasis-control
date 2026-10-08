@@ -57,7 +57,7 @@ showSable.checked = sableVisible;
 if (showFtbMap) showFtbMap.checked = ftbMapVisible;
 async function loadFtbPalette() {
   try {
-    const response = await fetch("/ftbchunks-palette.json?build=2", { cache: "force-cache" });
+    const response = await fetch("/ftbchunks-palette.json?build=3", { cache: "force-cache" });
     if (!response.ok) throw new Error("Unable to load FTB block palette");
     const palette = await response.json();
     if (palette && palette.blockByIndex) ftbPalette = palette;
