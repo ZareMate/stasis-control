@@ -48,6 +48,7 @@ let ftbTileCache = new Map();
 let ftbRenderToken = 0;
 let ftbPalette = { blockByIndex: {}, colors: {}, types: {} };
 let radarSignalReceived = false;
+let ftbInitialFitDone = false;
 let view = { x: -111, z: 243, scale: 2 };
 let drag = null;
 
@@ -667,11 +668,11 @@ function renderFtbMap(width, height) {
   }
 }
 
-function fitFtbMap() {
-  if (!ftbRegions.length || !map) return;
+function fitFtbMap(markInitial = false) {
+  if (!ftbRegions.length || !map) return false;
 
   const { width, height } = map.getBoundingClientRect();
-  if (!width || !height) return;
+  if (!width || !height) return false;
 
   const minX = Math.min(...ftbRegions.map(region => region.x * 512));
   const maxX = Math.max(...ftbRegions.map(region => region.x * 512 + 512));
@@ -690,6 +691,21 @@ function fitFtbMap() {
   );
 
   renderMap();
+  if (markInitial) ftbInitialFitDone = true;
+  return true;
+}
+
+function fitInitialFtbMap() {
+  if (ftbInitialFitDone || !ftbRegions.length) return;
+
+  const attempt = () => {
+    if (ftbInitialFitDone || !ftbRegions.length) return;
+    if (!fitFtbMap(true)) {
+      requestAnimationFrame(attempt);
+    }
+  };
+
+  requestAnimationFrame(() => requestAnimationFrame(attempt));
 }
 
 async function loadFtbRegions() {
@@ -724,7 +740,7 @@ async function loadFtbRegions() {
       : '<div class="empty-log">No FTB Chunks regions imported.</div>';
 
     renderMap();
-    if (ftbRegions.length) fitFtbMap();
+    if (ftbRegions.length) fitInitialFtbMap();
   } catch (error) {
     ftbRegions = [];
     if (ftbRegionCount) ftbRegionCount.textContent = "0";
@@ -927,7 +943,7 @@ if (ftbImportButton) {
   ftbImportButton.addEventListener("click", importFtbRegions);
 }
 if (ftbFitButton) {
-  ftbFitButton.addEventListener("click", fitFtbMap);
+  ftbFitButton.addEventListener("click", () => fitFtbMap(false));
 }
 if (ftbDimension) {
   ftbDimension.addEventListener("change", () => {
