@@ -810,8 +810,11 @@ function renderMap() {
     const minZ = Math.min(road.z1, road.z2);
     point.style.left = (width / 2 + (minX - view.x) * view.scale) + "px";
     point.style.top = (height / 2 + (minZ - view.z) * view.scale) + "px";
-    point.style.width = Math.max(14, Math.abs(road.x2 - road.x1) * view.scale) + "px";
-    point.style.height = Math.max(14, Math.abs(road.z2 - road.z1) * view.scale) + "px";
+    const roadWidth = Math.max(1, Math.abs(road.x2 - road.x1) * view.scale);
+    const roadHeight = Math.max(1, Math.abs(road.z2 - road.z1) * view.scale);
+    point.style.width = roadWidth + "px";
+    point.style.height = roadHeight + "px";
+    point.classList.toggle("map-tiny", Math.max(roadWidth, roadHeight) < 6);
     point.title = "Road: X " + road.x1 + "–" + road.x2 + ", Z " + road.z1 + "–" + road.z2;
     map.append(point);
   }
@@ -842,8 +845,11 @@ function renderMap() {
     const minZ = Math.min(building.z1, building.z2);
     point.style.left = (width / 2 + (minX - view.x) * view.scale) + "px";
     point.style.top = (height / 2 + (minZ - view.z) * view.scale) + "px";
-    point.style.width = Math.max(14, Math.abs(building.x2 - building.x1) * view.scale) + "px";
-    point.style.height = Math.max(14, Math.abs(building.z2 - building.z1) * view.scale) + "px";
+    const buildingWidth = Math.max(1, Math.abs(building.x2 - building.x1) * view.scale);
+    const buildingHeight = Math.max(1, Math.abs(building.z2 - building.z1) * view.scale);
+    point.style.width = buildingWidth + "px";
+    point.style.height = buildingHeight + "px";
+    point.classList.toggle("map-tiny", Math.max(buildingWidth, buildingHeight) < 32);
     point.title = `${building.name}: X ${building.x1}–${building.x2}, Z ${building.z1}–${building.z2}`;
     const label = document.createElement("span");
     label.textContent = building.name;
