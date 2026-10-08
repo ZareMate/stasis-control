@@ -453,11 +453,13 @@ function render(nextPlayers, nextSableContraptions, nextBuildings, nextRoads, up
       '<span>X ' + Math.round(sable.x) + ' · Y ' + Math.round(sable.y) + ' · Z ' + Math.round(sable.z) +
       (sable.entityType ? ' · ' + escapeHtml(sable.entityType) : '') + '</span>' +
       '</div>' +
-      '<div class="sable-name-edit" hidden="' + (!radarCanModify) + '">' +
-      '<input class="sable-name-input" type="text" maxlength="40" autocomplete="off" placeholder="Custom name" value="' + safeName + '" data-sable-id="' + id + '"' + disabled + '>' +
-      '<button class="sable-save" type="button" data-sable-id="' + id + '"' + disabled + '>SAVE</button>' +
-      '</div>' +
-      '<div class="sable-save-status" aria-live="polite"></div>' +
+      radarCanModify
+        ? '<div class="sable-name-edit">' +
+          '<input class="sable-name-input" type="text" maxlength="40" autocomplete="off" placeholder="Custom name" value="' + safeName + '" data-sable-id="' + id + '"' + disabled + '>' +
+          '<button class="sable-save" type="button" data-sable-id="' + id + '"' + disabled + '>SAVE</button>' +
+          '</div>' +
+          '<div class="sable-save-status" aria-live="polite"></div>'
+        : '<div class="sable-save-status sable-read-only">View only</div>' +
       '</div>';
   }).join("") : '<div class="empty-log">No SABLE contraptions detected.</div>';
   if (buildingCount) buildingCount.textContent = buildings.length;
