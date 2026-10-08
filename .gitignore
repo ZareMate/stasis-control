@@ -6,3 +6,4 @@ data/
 models/
 whisper.cpp/
 stasis-control.code-workspace
+package-lock.json
