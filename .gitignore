@@ -2,10 +2,7 @@ node_modules/
 .env
 npm-debug.log*
 .DS_Store
-data/player-preferences.json
-data/activity-logs.json
-data/discord-users.json
-data/discord-sessions.json
+data/
 models/
 whisper.cpp/
 stasis-control.code-workspace
