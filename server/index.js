@@ -48,6 +48,9 @@ const DISCORD_BOT_TOKEN = process.env.DISCORD_TOKEN || "";
 const ACCESS_GUILD_ID = "1543358966300545116";
 const REQUIRED_ROLE_ID = "1552640238168580167";
 const RADAR_VIEW_ROLE_ID = "1543368933464211456";
+const TEST_ROLE_COOKIE = "stasis_test_role";
+const TEST_USER_ID = "000000000000000000";
+const TEST_USER_NAME = "Local Test";
 const AUTH_COOKIE = "stasis_session";
 const sessions = new Map();
 const oauthStates = new Map();
@@ -88,12 +91,76 @@ function parseCookies(header = "") {
   }).filter(([key]) => key));
 }
 
+function isLoopbackRequest(req) {
+  const host = String(req.hostname || "").toLowerCase().replace(/^\[|\]$/g, "");
+  const remote = String(req.socket?.remoteAddress || "")
+    .replace(/^::ffff:/i, "")
+    .toLowerCase();
+
+  return (
+    ["localhost", "127.0.0.1", "::1"].includes(host) &&
+    ["127.0.0.1", "::1", "0:0:0:0:0:0:0:1"].includes(remote)
+  );
+}
+
+function setLocalTestRoleCookie(req, res, role) {
+  if (!isLoopbackRequest(req)) return;
+
+  if (!role || role === "off") {
+    res.setHeader("Set-Cookie", TEST_ROLE_COOKIE + "=; Path=/; SameSite=Lax; Max-Age=0");
+    return;
+  }
+
+  res.setHeader(
+    "Set-Cookie",
+    TEST_ROLE_COOKIE + "=" + encodeURIComponent(role) + "; Path=/; SameSite=Lax; Max-Age=3600"
+  );
+}
+
+function getLocalTestRole(req) {
+  if (!isLoopbackRequest(req)) return null;
+
+  const requested = String(req.query?.testRole || "").trim().toLowerCase();
+  if (requested === "off") {
+    setLocalTestRoleCookie(req, req.res, "off");
+    return null;
+  }
+
+  const allowed = new Set(["full", "viewer", "denied"]);
+  if (allowed.has(requested)) {
+    setLocalTestRoleCookie(req, req.res, requested);
+    return requested;
+  }
+
+  const cookies = parseCookies(req.headers.cookie);
+  const cookieRole = String(cookies[TEST_ROLE_COOKIE] || "").trim().toLowerCase();
+  return allowed.has(cookieRole) ? cookieRole : null;
+}
+
+function localTestSession(req) {
+  const role = getLocalTestRole(req);
+  if (!role) return null;
+
+  return {
+    testRole: role,
+    user: {
+      id: TEST_USER_ID,
+      username: TEST_USER_NAME,
+      avatar: null
+    }
+  };
+}
+
+function requestSession(req) {
+  return sessionFor(req) || localTestSession(req);
+}
+
 function sessionUser(req) {
-  return sessionFor(req)?.user || null;
+  return requestSession(req)?.user || null;
 }
 
 function requireLogin(req, res, next) {
-  const session = sessionFor(req);
+  const session = requestSession(req);
   if (!session) return res.status(401).json({ error: "Log in with Discord to continue" });
   req.discordSession = session;
   req.discordUser = session.user;
@@ -154,6 +221,7 @@ async function refreshDiscordToken(session) {
 }
 
 async function userHasRequiredRole(session) {
+  if (session?.testRole) return session.testRole === "full";
   if (!session?.user?.id) return false;
   const userId = String(session.user.id);
   if (hasRememberedRole(userId)) return true;
@@ -220,6 +288,7 @@ async function userHasRequiredRole(session) {
 }
 
 async function userHasRadarRole(session) {
+  if (session?.testRole) return session.testRole === "full" || session.testRole === "viewer";
   if (!session?.user?.id) return false;
   const userId = String(session.user.id);
 
@@ -711,8 +780,10 @@ if (!CONTROLLER_TOKEN) {
 app.use(express.json({ limit: "32kb" }));
 
 async function sendDashboardPage(req, res) {
-  const session = sessionFor(req);
+  const session = requestSession(req);
   if (!session) return res.redirect(loginConfigured() ? "/auth/discord" : "/access-denied");
+  if (session.testRole === "viewer") return res.redirect("/radar?testRole=viewer");
+  if (session.testRole === "denied") return res.redirect("/access-denied?testRole=denied");
   if (!(await userHasRequiredRole(session))) return res.redirect("/access-denied");
   res.sendFile(path.join(ROOT, "public", "index.html"));
 }
@@ -785,8 +856,8 @@ app.get("/auth/discord/callback", async (req, res) => {
 
 app.get("/api/auth", (req, res) => {
   const user = sessionUser(req);
-  if (!user) return res.json({ configured: loginConfigured(), user: null, allowed: false });
-  const session = sessionFor(req);
+  if (!user) return res.json({ configured: loginConfigured(), user: null, allowed: false, radarAllowed: false, radarCanModify: false });
+  const session = requestSession(req);
   Promise.all([userHasRequiredRole(session), userHasRadarRole(session)]).then(([allowed, radarAllowed]) => res.json({
     configured: loginConfigured(),
     user: { id: user.id, username: user.username, avatar: user.avatar },
@@ -797,13 +868,14 @@ app.get("/api/auth", (req, res) => {
 });
 app.get("/access-denied", (_req, res) => res.sendFile(path.join(ROOT, "views", "access-denied.html")));
 app.get("/radar", async (req, res) => {
-  const session = sessionFor(req);
+  const session = requestSession(req);
   if (!session) return res.redirect(loginConfigured() ? "/auth/discord" : "/");
+  if (session.testRole === "denied") return res.redirect("/access-denied?testRole=denied");
   if (!(await userHasRadarRole(session))) return res.redirect("/access-denied");
   res.sendFile(path.join(ROOT, "public", "radar.html"));
 });
 app.get("/logs", async (req, res) => {
-  const session = sessionFor(req);
+  const session = requestSession(req);
   if (!session) return res.redirect(loginConfigured() ? "/auth/discord" : "/");
   if (!(await userHasRequiredRole(session))) return res.redirect("/access-denied");
   res.sendFile(path.join(ROOT, "views", "logs.html"));
@@ -826,7 +898,16 @@ app.get("/api/logs", requireLogin, requireGuildRole, (req, res) => {
 app.post("/auth/logout", (req, res) => {
   const token = parseCookies(req.headers.cookie)[AUTH_COOKIE];
   if (token && sessions.delete(sessionTokenHash(token))) saveSessions();
-  res.setHeader("Set-Cookie", `${AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+
+  if (isLoopbackRequest(req)) {
+    res.setHeader("Set-Cookie", [
+      AUTH_COOKIE + "=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+      TEST_ROLE_COOKIE + "=; Path=/; SameSite=Lax; Max-Age=0"
+    ]);
+  } else {
+    res.setHeader("Set-Cookie", AUTH_COOKIE + "=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+  }
+
   res.json({ ok: true });
 });
 
