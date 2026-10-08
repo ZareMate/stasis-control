@@ -6,7 +6,7 @@ const http = require("http");
 const crypto = require("crypto");
 const express = require("express");
 const { WebSocketServer, WebSocket } = require("ws");
-const { parseRegionName, readZipEntry, zipEntries, inspectRegionBuffer, listRegionFiles, SUPPORTED_LAYERS } = require("./ftbchunks");
+const { parseRegionName, readZipEntry, zipEntries, inspectRegionBuffer, mergeRegionBuffers, listRegionFiles, SUPPORTED_LAYERS } = require("./ftbchunks");
 
 const ROOT = path.join(__dirname, "..");
 const app = express();
@@ -851,19 +851,50 @@ app.post(
       const directory = ftbDimensionDirectory(dimension);
       fs.mkdirSync(directory, { recursive: true });
       const file = ftbRegionFile(dimension, region.name);
-      fs.writeFileSync(file, req.body, { mode: 0o600 });
+
+      let output = req.body;
+      let merge = {
+        merged: false,
+        added: info.chunks.length,
+        updated: 0,
+        skippedOlder: 0,
+        incomingChunks: info.chunks.length,
+        finalChunks: info.chunks.length
+      };
+
+      if (fs.existsSync(file)) {
+        const existing = fs.readFileSync(file);
+        const result = mergeRegionBuffers(existing, req.body, region.name);
+        output = result.buffer;
+        merge = {
+          merged: true,
+          added: result.added,
+          updated: result.updated,
+          skippedOlder: result.skippedOlder,
+          incomingChunks: result.incomingChunks,
+          finalChunks: result.finalChunks
+        };
+      }
+
+      const temporary = file + ".tmp";
+      fs.writeFileSync(temporary, output, { mode: 0o600 });
+      fs.chmodSync(temporary, 0o600);
+      fs.renameSync(temporary, file);
+
+      const finalInfo = inspectRegionBuffer(output, region.name);
 
       res.json({
         ok: true,
         dimension,
         region: {
-          name: info.name,
-          x: info.x,
-          z: info.z,
-          version: info.version,
-          chunkCount: info.chunks.length,
-          size: req.body.length
-        }
+          name: finalInfo.name,
+          x: finalInfo.x,
+          z: finalInfo.z,
+          version: finalInfo.version,
+          chunkCount: finalInfo.chunks.length,
+          size: output.length
+        },
+        merge
       });
     } catch (error) {
       console.error("[Radar] FTB Chunks import failed:", error.message);
