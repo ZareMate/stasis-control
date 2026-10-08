@@ -881,3 +881,7 @@ html,body.radar-page{
   .apple-hero h2{font-size:46px}
   .apple-hero-status{width:max-content;margin-top:16px}
 }
+
+
+/* The editor grid overrides the browser's hidden attribute, so keep viewer-only editors truly hidden. */
+.map-editors[hidden]{display:none !important}
