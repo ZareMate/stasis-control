@@ -32,12 +32,32 @@ const roadSubmit = document.getElementById("roadSubmit");
 const buildingCount = document.getElementById("buildingCount");
 const roadCount = document.getElementById("roadCount");
 let socket, reconnectTimer, players = [], sableContraptions = [], buildings = [], roads = [];
+let radarCanModify = false;
 let radarSignalReceived = false;
 let view = { x: -111, z: 243, scale: 2 };
 let drag = null;
 
 let sableVisible = localStorage.getItem("radar-show-sable") !== "false";
 showSable.checked = sableVisible;
+async function loadRadarPermissions() {
+  const response = await fetch("/api/auth", { cache: "no-store" });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok || !data.radarAllowed) {
+    location.assign("/access-denied");
+    return false;
+  }
+
+  radarCanModify = data.radarCanModify === true;
+
+  const editors = document.querySelector(".map-editors");
+  if (editors) {
+    editors.hidden = !radarCanModify;
+  }
+
+  return true;
+}
+
 
 function escapeHtml(value) { const node = document.createElement("span"); node.textContent = value; return node.innerHTML; }
 function statusFor(player) { const status = String(player.status || "unknown").toLowerCase(); return ["enemy", "ally", "team", "unknown"].includes(status) ? status : "unknown"; }
@@ -426,14 +446,14 @@ function render(nextPlayers, nextSableContraptions, nextBuildings, nextRoads, up
     const name = sable.name || "";
     const id = escapeHtml(sable.id || "");
     const safeName = escapeHtml(name).replace(/"/g, "&quot;");
-    const disabled = sable.id ? "" : " disabled";
+    const disabled = !radarCanModify || !sable.id ? " disabled" : "";
     return '<div class="radar-sable-row">' +
       '<div class="radar-sable-info">' +
       '<strong><i></i>SABLE ' + number + '</strong>' +
       '<span>X ' + Math.round(sable.x) + ' · Y ' + Math.round(sable.y) + ' · Z ' + Math.round(sable.z) +
       (sable.entityType ? ' · ' + escapeHtml(sable.entityType) : '') + '</span>' +
       '</div>' +
-      '<div class="sable-name-edit">' +
+      '<div class="sable-name-edit" hidden="' + (!radarCanModify) + '">' +
       '<input class="sable-name-input" type="text" maxlength="40" autocomplete="off" placeholder="Custom name" value="' + safeName + '" data-sable-id="' + id + '"' + disabled + '>' +
       '<button class="sable-save" type="button" data-sable-id="' + id + '"' + disabled + '>SAVE</button>' +
       '</div>' +
@@ -591,6 +611,7 @@ buildingList.addEventListener("click", async event => {
   }
 });
 sableList.addEventListener("click", async event => {
+  if (!radarCanModify) return;
   const button = event.target.closest(".sable-save");
   if (!button || button.disabled) return;
 
@@ -642,4 +663,4 @@ function connect() { clearTimeout(reconnectTimer); const protocol = location.pro
   radarSignalReceived = true;
   render(message.players || [], message.sableContraptions || [], message.buildings || [], message.roads || [], message.updatedAt);
 } } catch {} }; }
-connect();
+loadRadarPermissions().then(allowed => { if (allowed) connect(); }).catch(() => location.assign("/access-denied"));
