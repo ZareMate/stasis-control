@@ -6,6 +6,7 @@ const http = require("http");
 const crypto = require("crypto");
 const express = require("express");
 const { WebSocketServer, WebSocket } = require("ws");
+const { parseRegionName, readZipEntry, zipEntries, inspectRegionBuffer, listRegionFiles, SUPPORTED_LAYERS } = require("./ftbchunks");
 
 const ROOT = path.join(__dirname, "..");
 const app = express();
