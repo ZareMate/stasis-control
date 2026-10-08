@@ -988,3 +988,11 @@ html,body.radar-page{
 .radar-building.map-tiny span{
   display:none;
 }
+
+.radar-row[role="button"]{
+  cursor:pointer;
+}
+.radar-row[role="button"]:focus{
+  outline:2px solid #1bd96a;
+  outline-offset:1px;
+}
