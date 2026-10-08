@@ -1581,7 +1581,16 @@
     "create:framed_glass": "#CCE5E4",
     "environmental:cherry_leaves": "#EB75A6",
     "environmental:cherry_leaf_carpet": "#D58BBC",
-    "integrateddynamics:menril_leaves": "#76B4B8"
+    "integrateddynamics:menril_leaves": "#76B4B8",
+    "myrtrees:rubberwood_leaves": "#668C32",
+    "pneumaticcraft:oil": "#292929",
+    "projectred-exploration:marble": "#D1C8BB",
+    "projectred-exploration:marble_brick": "#D1C8BB",
+    "traverse:yellow_autumnal_leaves": "#E4CD30",
+    "traverse:orange_autumnal_leaves": "#EA8C1C",
+    "traverse:red_autumnal_leaves": "#9E3727",
+    "traverse:brown_autumnal_leaves": "#714A26",
+    "traverse:fir_leaves": "#1A4618"
   },
   "types": {
     "minecraft:iron_bars": "ignored",
@@ -1599,7 +1608,28 @@
     "minecraft:fern": "ignored",
     "minecraft:large_fern": "ignored",
     "byg:meadow_grass_block": "grass",
-    "byg:short_grass": "ignored"
+    "byg:short_grass": "ignored",
+    "mininggadgets:minerslight": "ignored",
+    "projectvibrantjourneys:glowing_blue_fungus": "ignored",
+    "projectvibrantjourneys:white_bark_mushroom": "ignored",
+    "projectvibrantjourneys:orange_bark_mushroom": "ignored",
+    "projectvibrantjourneys:light_brown_bark_mushroom": "ignored",
+    "projectvibrantjourneys:bark_mushroom": "ignored",
+    "projectvibrantjourneys:cattail": "ignored",
+    "projectvibrantjourneys:sea_oats": "ignored",
+    "projectvibrantjourneys:beach_grass": "ignored",
+    "projectvibrantjourneys:watergrass": "ignored",
+    "projectvibrantjourneys:sandy_sprouts": "ignored",
+    "projectvibrantjourneys:reeds": "ignored",
+    "projectvibrantjourneys:small_cactus": "ignored",
+    "projectvibrantjourneys:short_grass": "ignored",
+    "projectvibrantjourneys:blue_wildflowers": "ignored",
+    "projectvibrantjourneys:yellow_wildflowers": "ignored",
+    "projectvibrantjourneys:orange_wildflowers": "ignored",
+    "projectvibrantjourneys:purple_wildflowers": "ignored",
+    "projectvibrantjourneys:white_wildflowers": "ignored",
+    "projectvibrantjourneys:mixed_wildflowers": "ignored",
+    "psi:conjured": "ignored"
   },
   "generatedFrom": "server FTB Chunks block_map.txt + official FTB Chunks Minecraft block color resource"
 }
