@@ -48,7 +48,6 @@ let ftbTileCache = new Map();
 let ftbRenderToken = 0;
 let ftbPalette = { blockByIndex: {}, colors: {}, types: {} };
 let radarSignalReceived = false;
-let ftbInitialFitDone = false;
 let view = { x: -111, z: 243, scale: 2 };
 let drag = null;
 
@@ -691,22 +690,9 @@ function fitFtbMap(markInitial = false) {
   );
 
   renderMap();
-  if (markInitial) ftbInitialFitDone = true;
   return true;
 }
 
-function fitInitialFtbMap() {
-  if (ftbInitialFitDone || !ftbRegions.length) return;
-
-  const attempt = () => {
-    if (ftbInitialFitDone || !ftbRegions.length) return;
-    if (!fitFtbMap(true)) {
-      requestAnimationFrame(attempt);
-    }
-  };
-
-  requestAnimationFrame(() => requestAnimationFrame(attempt));
-}
 
 async function loadFtbRegions() {
   if (!ftbRegionList) return;
@@ -740,7 +726,6 @@ async function loadFtbRegions() {
       : '<div class="empty-log">No FTB Chunks regions imported.</div>';
 
     renderMap();
-    if (ftbRegions.length) fitInitialFtbMap();
   } catch (error) {
     ftbRegions = [];
     if (ftbRegionCount) ftbRegionCount.textContent = "0";
