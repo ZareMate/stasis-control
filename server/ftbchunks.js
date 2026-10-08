@@ -470,9 +470,11 @@ function mergeRegionBuffers(existingBuffer, incomingBuffer, expectedRegion) {
   for (const incoming of newInfo.chunks) {
     const key = incoming.x + "," + incoming.z;
     const existing = chunkMap.get(key);
-    if (!existing || incoming.lastModified >= existing.lastModified) {
+    if (!existing) {
       chunkMap.set(key, { ...incoming });
-      if (existing) selectedIncoming++;
+    } else if (incoming.lastModified > existing.lastModified) {
+      chunkMap.set(key, { ...incoming });
+      selectedIncoming++;
     } else {
       selectedExisting++;
     }
@@ -546,7 +548,9 @@ function mergeRegionBuffers(existingBuffer, incomingBuffer, expectedRegion) {
   return {
     buffer: writeZip([...outputEntries.entries()]),
     chunks: mergedChunks,
-    added: Math.max(0, newInfo.chunks.length - oldInfo.chunks.length),
+    added: newInfo.chunks.filter(incoming =>
+      !oldInfo.chunks.some(existing => existing.x === incoming.x && existing.z === incoming.z)
+    ).length,
     updated: selectedIncoming,
     skippedOlder: selectedExisting,
     incomingChunks: newInfo.chunks.length,
