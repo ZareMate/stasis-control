@@ -13,6 +13,7 @@ const ftbChunksPanel = document.getElementById("ftbChunksPanel");
 const ftbDimension = document.getElementById("ftbDimension");
 const ftbMapFiles = document.getElementById("ftbMapFiles");
 const ftbImportButton = document.getElementById("ftbImportButton");
+const ftbFitButton = document.getElementById("ftbFitButton");
 const ftbStatus = document.getElementById("ftbStatus");
 const ftbRegionList = document.getElementById("ftbRegionList");
 const ftbRegionCount = document.getElementById("ftbRegionCount");
@@ -572,6 +573,7 @@ async function loadFtbRegions() {
       : '<div class="empty-log">No FTB Chunks regions imported.</div>';
 
     renderMap();
+    if (ftbRegions.length) fitFtbMap();
   } catch (error) {
     ftbRegions = [];
     if (ftbRegionCount) ftbRegionCount.textContent = "0";
@@ -767,6 +769,9 @@ if (showFtbMap) {
 
 if (ftbImportButton) {
   ftbImportButton.addEventListener("click", importFtbRegions);
+}
+if (ftbFitButton) {
+  ftbFitButton.addEventListener("click", fitFtbMap);
 }
 if (ftbDimension) {
   ftbDimension.addEventListener("change", () => {
