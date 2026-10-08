@@ -29,6 +29,8 @@ const roadZ2 = document.getElementById("roadZ2");
 const roadList = document.getElementById("roadList");
 const roadStatus = document.getElementById("roadStatus");
 const roadSubmit = document.getElementById("roadSubmit");
+const buildingCount = document.getElementById("buildingCount");
+const roadCount = document.getElementById("roadCount");
 let socket, reconnectTimer, players = [], sableContraptions = [], buildings = [], roads = [];
 let radarSignalReceived = false;
 let view = { x: -111, z: 243, scale: 2 };
@@ -438,6 +440,9 @@ function render(nextPlayers, nextSableContraptions, nextBuildings, nextRoads, up
       '<div class="sable-save-status" aria-live="polite"></div>' +
       '</div>';
   }).join("") : '<div class="empty-log">No SABLE contraptions detected.</div>';
+  if (buildingCount) buildingCount.textContent = buildings.length;
+  if (roadCount) roadCount.textContent = roads.length;
+
   buildingList.innerHTML = buildings.length ? buildings.map(building =>
     '<div class="building-row"><div><strong>' + escapeHtml(building.name) + '</strong><span>X ' + Math.round(building.x1) + '–' + Math.round(building.x2) + ' · Z ' + Math.round(building.z1) + '–' + Math.round(building.z2) + '</span></div>' +
     '<div class="building-actions"><button class="building-edit" type="button" data-building-id="' + escapeHtml(building.id) + '">EDIT</button><button class="building-delete" type="button" data-building-id="' + escapeHtml(building.id) + '">REMOVE</button></div></div>'
