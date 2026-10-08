@@ -515,6 +515,31 @@ function renderFtbMap(width, height) {
   }
 }
 
+function fitFtbMap() {
+  if (!ftbRegions.length || !map) return;
+
+  const { width, height } = map.getBoundingClientRect();
+  if (!width || !height) return;
+
+  const minX = Math.min(...ftbRegions.map(region => region.x * 512));
+  const maxX = Math.max(...ftbRegions.map(region => region.x * 512 + 512));
+  const minZ = Math.min(...ftbRegions.map(region => region.z * 512));
+  const maxZ = Math.max(...ftbRegions.map(region => region.z * 512 + 512));
+
+  view.x = (minX + maxX) / 2;
+  view.z = (minZ + maxZ) / 2;
+
+  const padding = 80;
+  const spanX = Math.max(512, maxX - minX);
+  const spanZ = Math.max(512, maxZ - minZ);
+  view.scale = Math.min(
+    4,
+    Math.max(0.35, Math.min((width - padding) / spanX, (height - padding) / spanZ))
+  );
+
+  renderMap();
+}
+
 async function loadFtbRegions() {
   if (!ftbRegionList) return;
 
@@ -589,6 +614,7 @@ async function importFtbRegions() {
     ftbTileCache = new Map();
     ftbStatus.textContent = "Regions imported.";
     await loadFtbRegions();
+    fitFtbMap();
   } catch (error) {
     ftbStatus.textContent = error.message;
   } finally {
@@ -616,6 +642,7 @@ function renderMap() {
   const offsetZ = height / 2 - ((view.z * view.scale) % grid);
   map.style.backgroundSize = `${grid}px ${grid}px,${grid}px ${grid}px,${grid * 5}px ${grid * 5}px,${grid * 5}px ${grid * 5}px`;
   map.style.backgroundPosition = `${offsetX}px ${offsetZ}px,${offsetX}px ${offsetZ}px,${offsetX}px ${offsetZ}px,${offsetX}px ${offsetZ}px`;
+  renderFtbMap(width, height);
   coordinates.textContent = `X ${Math.round(view.x)} · Z ${Math.round(view.z)} · ${view.scale.toFixed(1)} px/block`;
   for (const road of roads) {
     const point = document.createElement("div");
