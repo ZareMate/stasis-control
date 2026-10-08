@@ -6,6 +6,7 @@ const http = require("http");
 const crypto = require("crypto");
 const express = require("express");
 const { WebSocketServer, WebSocket } = require("ws");
+const { parseRegionName, readZipEntry, zipEntries, inspectRegionBuffer, mergeRegionBuffers, listRegionFiles, SUPPORTED_LAYERS } = require("./ftbchunks");
 
 const ROOT = path.join(__dirname, "..");
 const app = express();
@@ -40,6 +41,7 @@ const DISCORD_SESSIONS_FILE = path.join(DATA_DIR, "discord-sessions.json");
 const SABLE_NAMES_FILE = path.join(DATA_DIR, "sable-names.json");
 const RADAR_BUILDINGS_FILE = path.join(DATA_DIR, "radar-buildings.json");
 const RADAR_ROADS_FILE = path.join(DATA_DIR, "radar-roads.json");
+const FTB_CHUNKS_DIR = process.env.STASIS_FTBCHUNKS_DIR || path.join(DATA_DIR, "ftbchunks");
 const PULL_API_TOKEN = process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN || "";
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
@@ -496,6 +498,44 @@ let sableNames = loadSableNames();
 let radarBuildings = loadRadarBuildings();
 let radarRoads = loadRadarRoads();
 
+function sanitizeFtbDimension(value) {
+  const dimension = String(value || "minecraft:overworld").trim();
+  if (!dimension || dimension.length > 128 || !/^[a-zA-Z0-9_.:-]+$/.test(dimension)) {
+    return null;
+  }
+  return dimension;
+}
+
+function ftbDimensionKey(dimension) {
+  return dimension.replace(/[^a-zA-Z0-9_.-]+/g, "_");
+}
+
+function ftbDimensionDirectory(dimension) {
+  const safeDimension = sanitizeFtbDimension(dimension);
+  if (!safeDimension) return null;
+  return path.join(FTB_CHUNKS_DIR, ftbDimensionKey(safeDimension));
+}
+
+function ftbRegionFile(dimension, regionName) {
+  const directory = ftbDimensionDirectory(dimension);
+  const region = parseRegionName(regionName);
+  if (!directory || !region) return null;
+  return path.join(directory, region.name + ".zip");
+}
+
+function listFtbRegions(dimension) {
+  const directory = ftbDimensionDirectory(dimension);
+  if (!directory) return [];
+  return listRegionFiles(directory).map(region => ({
+    name: region.name,
+    x: region.x,
+    z: region.z,
+    version: region.version,
+    chunkCount: region.chunks.length,
+    size: region.size
+  })).sort((a, b) => a.z - b.z || a.x - b.x);
+}
+
 function saveSableNames() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const temporary = SABLE_NAMES_FILE + ".tmp";
@@ -778,6 +818,134 @@ if (!CONTROLLER_TOKEN) {
 }
 
 app.use(express.json({ limit: "32kb" }));
+
+app.get("/api/radar/ftbchunks", requireLogin, requireRadarRole, (req, res) => {
+  const dimension = sanitizeFtbDimension(req.query.dimension || "minecraft:overworld");
+  if (!dimension) return res.status(400).json({ error: "Invalid FTB Chunks dimension" });
+  res.json({
+    dimension,
+    regionSize: 512,
+    regionChunks: 32,
+    regions: listFtbRegions(dimension)
+  });
+});
+
+app.post(
+  "/api/radar/ftbchunks/import",
+  requireLogin,
+  requireGuildRole,
+  express.raw({ type: "*/*", limit: "20mb" }),
+  (req, res) => {
+    const dimension = sanitizeFtbDimension(req.query.dimension || "minecraft:overworld");
+    const requestedRegion = req.query.region || req.get("x-ftbchunks-region") || "";
+    const region = parseRegionName(requestedRegion);
+
+    if (!dimension) return res.status(400).json({ error: "Invalid FTB Chunks dimension" });
+    if (!region) return res.status(400).json({ error: "Invalid FTB Chunks region name" });
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({ error: "A non-empty FTB Chunks region ZIP is required" });
+    }
+
+    try {
+      const info = inspectRegionBuffer(req.body, region.name);
+      const directory = ftbDimensionDirectory(dimension);
+      fs.mkdirSync(directory, { recursive: true });
+      const file = ftbRegionFile(dimension, region.name);
+
+      let output = req.body;
+      let merge = {
+        merged: false,
+        added: info.chunks.length,
+        updated: 0,
+        skippedOlder: 0,
+        incomingChunks: info.chunks.length,
+        finalChunks: info.chunks.length
+      };
+
+      if (fs.existsSync(file)) {
+        const existing = fs.readFileSync(file);
+        const result = mergeRegionBuffers(existing, req.body, region.name);
+        output = result.buffer;
+        merge = {
+          merged: true,
+          added: result.added,
+          updated: result.updated,
+          skippedOlder: result.skippedOlder,
+          incomingChunks: result.incomingChunks,
+          finalChunks: result.finalChunks
+        };
+      }
+
+      const temporary = file + ".tmp";
+      fs.writeFileSync(temporary, output, { mode: 0o600 });
+      fs.chmodSync(temporary, 0o600);
+      fs.renameSync(temporary, file);
+
+      const finalInfo = inspectRegionBuffer(output, region.name);
+
+      res.json({
+        ok: true,
+        dimension,
+        region: {
+          name: finalInfo.name,
+          x: finalInfo.x,
+          z: finalInfo.z,
+          version: finalInfo.version,
+          chunkCount: finalInfo.chunks.length,
+          size: output.length
+        },
+        merge
+      });
+    } catch (error) {
+      console.error("[Radar] FTB Chunks import failed:", error.message);
+      return res.status(400).json({ error: error.message || "Invalid FTB Chunks region ZIP" });
+    }
+  }
+);
+
+app.delete("/api/radar/ftbchunks/region/:region", requireLogin, requireGuildRole, (req, res) => {
+  const dimension = sanitizeFtbDimension(req.query.dimension || "minecraft:overworld");
+  const region = parseRegionName(req.params.region);
+  const file = dimension && region ? ftbRegionFile(dimension, region.name) : null;
+
+  if (!file) return res.status(400).json({ error: "Invalid FTB Chunks region" });
+  if (!fs.existsSync(file)) return res.status(404).json({ error: "FTB Chunks region not found" });
+
+  try {
+    fs.unlinkSync(file);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("[Radar] FTB Chunks region removal failed:", error.message);
+    res.status(500).json({ error: "Unable to remove FTB Chunks region" });
+  }
+});
+
+app.get("/api/radar/ftbchunks/region/:region/:layer", requireLogin, requireRadarRole, (req, res) => {
+  const dimension = sanitizeFtbDimension(req.query.dimension || "minecraft:overworld");
+  const region = parseRegionName(req.params.region);
+  const layer = String(req.params.layer || "") + ".png";
+  const file = dimension && region ? ftbRegionFile(dimension, region.name) : null;
+
+  if (!file || !SUPPORTED_LAYERS.has(layer)) {
+    return res.status(400).json({ error: "Invalid FTB Chunks region or image layer" });
+  }
+  if (!fs.existsSync(file)) return res.status(404).send("FTB Chunks region not found");
+
+  try {
+    const archive = fs.readFileSync(file);
+    const entries = zipEntries(archive);
+    const image = readZipEntry(archive, entries, layer);
+    if (!image) return res.status(404).send("FTB Chunks image layer not found");
+
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.type("png").send(image);
+  } catch (error) {
+    console.error("[Radar] FTB Chunks image read failed:", error.message);
+    res.status(500).send("Unable to read FTB Chunks image");
+  }
+});
+
+
 
 async function sendDashboardPage(req, res) {
   const session = requestSession(req);

@@ -67,6 +67,7 @@
           <span id="sableLegend" class="sable">SABLE</span>
         </div>
 
+        <div id="ftbMapLayer" class="radar-ftb-layer" aria-hidden="true"></div>
         <div id="radarEmpty" class="radar-empty">Waiting for radar data…</div>
       </div>
 
@@ -127,8 +128,34 @@
         <div id="roadList" class="road-list"></div>
       </section>
     </section>
+
+    <section id="ftbChunksPanel" class="map-editor-panel ftb-chunks-panel" hidden aria-hidden="true">
+      <div class="editor-heading">
+        <div>
+          <h3>FTB Chunks map</h3>
+          <p>Import cached 512 × 512 region images from FTB Chunks</p>
+        </div>
+        <span class="editor-count" id="ftbRegionCount">0</span>
+      </div>
+
+      <div class="ftb-chunks-form">
+        <label>
+          <span>Dimension</span>
+          <input id="ftbDimension" type="text" value="minecraft:overworld" maxlength="128" spellcheck="false">
+        </label>
+        <label>
+          <span>Region ZIPs</span>
+          <input id="ftbMapFiles" type="file" accept=".zip,application/zip" multiple>
+        </label>
+        <button id="ftbFitButton" type="button">FIT MAP</button>
+        <button id="ftbImportButton" type="button">IMPORT REGIONS</button>
+      </div>
+
+      <div id="ftbStatus" class="building-status" aria-live="polite"></div>
+      <div id="ftbRegionList" class="building-list"></div>
+    </section>
   </main>
 
-  <script src="/radar.js?v=20261008-readonly2"></script>
+  <script src="/radar.js?v=20261008-ftb3"></script>
 </body>
 </html>

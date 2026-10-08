@@ -7,6 +7,16 @@ const connection = document.getElementById("connectionText");
 const meta = document.getElementById("radarMeta");
 const coordinates = document.getElementById("radarCoordinates");
 const showSable = document.getElementById("showSable");
+const showFtbMap = document.getElementById("showFtbMap");
+const ftbMapLayer = document.getElementById("ftbMapLayer");
+const ftbChunksPanel = document.getElementById("ftbChunksPanel");
+const ftbDimension = document.getElementById("ftbDimension");
+const ftbMapFiles = document.getElementById("ftbMapFiles");
+const ftbImportButton = document.getElementById("ftbImportButton");
+const ftbFitButton = document.getElementById("ftbFitButton");
+const ftbStatus = document.getElementById("ftbStatus");
+const ftbRegionList = document.getElementById("ftbRegionList");
+const ftbRegionCount = document.getElementById("ftbRegionCount");
 const sablePanel = document.getElementById("sablePanel");
 const sableLegend = document.getElementById("sableLegend");
 const radarShell = map.closest(".radar-shell");
@@ -33,13 +43,31 @@ const buildingCount = document.getElementById("buildingCount");
 const roadCount = document.getElementById("roadCount");
 let socket, reconnectTimer, players = [], sableContraptions = [], buildings = [], roads = [];
 let radarCanModify = false;
+let ftbRegions = [];
+let ftbTileCache = new Map();
+let ftbRenderToken = 0;
+let ftbPalette = { blockByIndex: {}, colors: {}, types: {} };
 let radarSignalReceived = false;
 let view = { x: -111, z: 243, scale: 2 };
 let drag = null;
 
 let sableVisible = localStorage.getItem("radar-show-sable") !== "false";
+let ftbMapVisible = localStorage.getItem("radar-show-ftb-map") !== "false";
 showSable.checked = sableVisible;
+if (showFtbMap) showFtbMap.checked = ftbMapVisible;
+async function loadFtbPalette() {
+  try {
+    const response = await fetch("/ftbchunks-palette.json?build=3", { cache: "force-cache" });
+    if (!response.ok) throw new Error("Unable to load FTB block palette");
+    const palette = await response.json();
+    if (palette && palette.blockByIndex) ftbPalette = palette;
+  } catch (error) {
+    console.warn("[Radar] FTB block palette unavailable:", error.message);
+  }
+}
+
 async function loadRadarPermissions() {
+  await loadFtbPalette();
   const response = await fetch("/api/auth", { cache: "no-store" });
   const data = await response.json().catch(() => ({}));
 
@@ -54,6 +82,17 @@ async function loadRadarPermissions() {
   if (editors) {
     editors.hidden = !radarCanModify;
     editors.setAttribute("aria-hidden", String(!radarCanModify));
+  }
+
+  if (ftbChunksPanel) {
+    ftbChunksPanel.hidden = !radarCanModify;
+    ftbChunksPanel.setAttribute("aria-hidden", String(!radarCanModify));
+  }
+
+  if (radarCanModify) {
+    await loadFtbRegions();
+  } else {
+    await loadFtbRegions();
   }
 
   return true;
@@ -343,6 +382,405 @@ function renderRoadCenterlines(width, height) {
   map.append(svg);
 }
 
+function ftbRegionUrl(region, layer) {
+  return "/api/radar/ftbchunks/region/" +
+    encodeURIComponent(region.name) + "/" + layer +
+    "?dimension=" + encodeURIComponent(ftbDimension?.value?.trim() || "minecraft:overworld");
+}
+
+function imageFromUrl(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Unable to load FTB Chunks image"));
+    image.src = url;
+  });
+}
+
+function clampChannel(value) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function parseHexColor(value) {
+  if (typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value)) return null;
+  return [
+    parseInt(value.slice(1, 3), 16),
+    parseInt(value.slice(3, 5), 16),
+    parseInt(value.slice(5, 7), 16)
+  ];
+}
+
+function fallbackFtbBlockColor(blockId) {
+  const id = String(blockId || "").toLowerCase();
+  const path = id.includes(":") ? id.split(":")[1] : id;
+
+  const colors = {
+    water: [63, 118, 228],
+    flowing_water: [63, 118, 228],
+    lava: [207, 96, 46],
+    stone: [140, 140, 140],
+    cobblestone: [122, 122, 122],
+    deepslate: [78, 78, 78],
+    tuff: [108, 112, 102],
+    calcite: [224, 224, 219],
+    diorite: [194, 194, 194],
+    granite: [149, 103, 90],
+    dirt: [128, 92, 60],
+    coarse_dirt: [112, 78, 51],
+    rooted_dirt: [125, 89, 64],
+    clay: [159, 164, 177],
+    gravel: [119, 112, 109],
+    sand: [245, 231, 164],
+    red_sand: [187, 95, 45],
+    sandstone: [223, 215, 173],
+    snow: [239, 239, 239],
+    snow_block: [239, 239, 239],
+    powder_snow: [232, 241, 249],
+    ice: [145, 182, 247],
+    packed_ice: [145, 182, 247],
+    blue_ice: [145, 182, 247],
+    grass_block: [100, 150, 75],
+    podzol: [110, 87, 54],
+    mycelium: [104, 82, 96],
+    moss_block: [104, 130, 79],
+    bedrock: [55, 55, 55],
+    obsidian: [21, 0, 71],
+    netherrack: [122, 53, 53],
+    end_stone: [177, 173, 113],
+    bricks: [174, 96, 75],
+    nether_bricks: [46, 23, 27],
+    quartz_block: [235, 229, 220],
+    blackstone: [56, 50, 59],
+    basalt: [80, 80, 84],
+    polished_basalt: [90, 90, 94],
+    prismarine: [82, 142, 135],
+    sea_lantern: [170, 220, 210]
+  };
+
+  if (colors[path]) return colors[path];
+
+  if (/\b(log|wood|planks|stem|hyphae)\b/.test(path)) {
+    if (path.includes("dark_oak")) return [81, 45, 20];
+    if (path.includes("spruce")) return [124, 94, 46];
+    if (path.includes("birch")) return [242, 224, 147];
+    if (path.includes("jungle")) return [198, 118, 83];
+    if (path.includes("acacia")) return [224, 127, 62];
+    if (path.includes("cherry")) return [190, 127, 117];
+    return [150, 107, 62];
+  }
+
+  if (/leaves|leaf|vine/.test(path)) return [70, 100, 55];
+  if (/sand/.test(path)) return [220, 190, 130];
+  if (/stone|rock/.test(path)) return [128, 128, 128];
+  if (/brick/.test(path)) return [155, 90, 75];
+  if (/concrete|wool|terracotta/.test(path)) return [130, 130, 130];
+
+  return [128, 128, 128];
+}
+
+function ftbTint(base, tint, alpha) {
+  const a = Math.max(0, Math.min(1, alpha));
+  return [
+    base[0] + (tint[0] - base[0]) * a,
+    base[1] + (tint[1] - base[1]) * a,
+    base[2] + (tint[2] - base[2]) * a
+  ];
+}
+
+async function buildFtbTile(region) {
+  const dimension = ftbDimension?.value?.trim() || "minecraft:overworld";
+  const key = dimension + "|" + region.name;
+  const cached = ftbTileCache.get(key);
+  if (cached) return cached;
+
+  const promise = Promise.all([
+    imageFromUrl(ftbRegionUrl(region, "grass")),
+    imageFromUrl(ftbRegionUrl(region, "foliage")),
+    imageFromUrl(ftbRegionUrl(region, "water")),
+    imageFromUrl(ftbRegionUrl(region, "data")),
+    imageFromUrl(ftbRegionUrl(region, "blocks"))
+  ]).then(([grass, foliage, water, data, blocks]) => {
+    const width = 512;
+    const height = 512;
+
+    const readPixels = source => {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      context.drawImage(source, 0, 0, width, height);
+      return context.getImageData(0, 0, width, height).data;
+    };
+
+    const grassPixels = readPixels(grass);
+    const foliagePixels = readPixels(foliage);
+    const waterPixels = readPixels(water);
+    const dataPixels = readPixels(data);
+    const blockPixels = readPixels(blocks);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.className = "radar-ftb-tile";
+    canvas.setAttribute("aria-hidden", "true");
+
+    const context = canvas.getContext("2d");
+    const output = context.createImageData(width, height);
+
+    for (let offset = 0; offset < output.data.length; offset += 4) {
+      const packedWaterLightBiome = (dataPixels[offset + 2] << 8) | dataPixels[offset + 3];
+      const hasWater = (packedWaterLightBiome & 0x8000) !== 0;
+      const light = (packedWaterLightBiome >> 11) & 0x0f;
+
+      const blockIndexHex =
+        blockPixels[offset].toString(16).padStart(2, "0") +
+        blockPixels[offset + 1].toString(16).padStart(2, "0") +
+        blockPixels[offset + 2].toString(16).padStart(2, "0");
+
+      const blockId = ftbPalette.blockByIndex[blockIndexHex.toUpperCase()];
+      const customType = blockId ? ftbPalette.types[blockId] : null;
+      let base;
+
+      if (!blockId || customType === "ignored" || blockId === "minecraft:air" || blockId === "minecraft:void_air") {
+        output.data[offset] = 0;
+        output.data[offset + 1] = 0;
+        output.data[offset + 2] = 0;
+        output.data[offset + 3] = 0;
+        continue;
+      }
+
+      // ColorMapLoader applies explicit ftbchunks_block_colors entries first.
+      // Its built-in defaults then classify grass blocks as biome grass, leaves
+      // and vines as biome foliage, rails as gray, and flower pots as brown.
+      if (customType === "grass" || (/_grass_block$/.test(blockId) && !ftbPalette.colors[blockId])) {
+        base = [
+          grassPixels[offset],
+          grassPixels[offset + 1],
+          grassPixels[offset + 2]
+        ];
+        const darkness = 50 / 255;
+        base = base.map(channel => channel * (1 - darkness));
+      } else if (customType === "foliage" || (/(^|:)((.+_)?leaves|vine)$/.test(blockId) && !ftbPalette.colors[blockId])) {
+        base = [
+          foliagePixels[offset],
+          foliagePixels[offset + 1],
+          foliagePixels[offset + 2]
+        ];
+        const darkness = 50 / 255;
+        base = base.map(channel => channel * (1 - darkness));
+      } else if (blockId.endsWith("_rail") || /:(powered_rail|detector_rail|activator_rail)$/.test(blockId)) {
+        base = [136, 136, 136];
+      } else if (blockId.endsWith("flower_pot")) {
+        base = [104, 58, 45];
+      } else {
+        base =
+          parseHexColor(ftbPalette.colors[blockId]) ||
+          fallbackFtbBlockColor(blockId);
+      }
+
+      if (hasWater) {
+        const waterColor = [
+          waterPixels[offset],
+          waterPixels[offset + 1],
+          waterPixels[offset + 2]
+        ];
+        base = ftbTint(base, waterColor, 220 / 255);
+      }
+
+      // In FTB's normal map mode, light level is not used to brighten terrain.
+      // Instead it adds a small deterministic noise and height-based shadow.
+      const pixelIndex = offset / 4;
+      const px = pixelIndex % 512;
+      const py = Math.floor(pixelIndex / 512);
+      const west = py >= 0 && px > 0 ? offset - 4 : offset;
+      const north = py > 0 ? offset - 512 * 4 : offset;
+
+      const height = (dataPixels[offset] << 8) | dataPixels[offset + 1];
+      const westHeight = (dataPixels[west] << 8) | dataPixels[west + 1];
+      const northHeight = (dataPixels[north] << 8) | dataPixels[north + 1];
+
+      let addedBrightness = 0;
+      const shadow = 0.1 * (hasWater ? 0.6 : 1);
+      if (height > northHeight || height > westHeight) addedBrightness += shadow;
+      if (height < northHeight || height < westHeight) addedBrightness -= shadow;
+
+      // Match FTB's default noise range of ±0.025.
+      const hash = Math.sin((px + region.x * 512) * 12.9898 + (py + region.z * 512) * 78.233) * 43758.5453;
+      const noise = (hash - Math.floor(hash)) * 0.05 - 0.025;
+      addedBrightness += noise;
+
+      output.data[offset] = clampChannel(base[0] + addedBrightness * 255);
+      output.data[offset + 1] = clampChannel(base[1] + addedBrightness * 255);
+      output.data[offset + 2] = clampChannel(base[2] + addedBrightness * 255);
+      output.data[offset + 3] = 255;
+    }
+
+    context.putImageData(output, 0, 0);
+    return canvas;
+  });
+
+  ftbTileCache.set(key, promise);
+  try {
+    return await promise;
+  } catch (error) {
+    ftbTileCache.delete(key);
+    console.error("[Radar] FTB Chunks tile failed:", region.name, error);
+    throw error;
+  }
+}
+function renderFtbMap(width, height) {
+  if (!ftbMapLayer) return;
+
+  const token = ++ftbRenderToken;
+  ftbMapLayer.replaceChildren();
+
+  if (!ftbMapVisible || !ftbRegions.length) return;
+
+  const halfWorldWidth = width / (2 * view.scale);
+  const halfWorldHeight = height / (2 * view.scale);
+  const minWorldX = view.x - halfWorldWidth - 512;
+  const maxWorldX = view.x + halfWorldWidth + 512;
+  const minWorldZ = view.z - halfWorldHeight - 512;
+  const maxWorldZ = view.z + halfWorldHeight + 512;
+
+  const visible = ftbRegions.filter(region => {
+    const x = region.x * 512;
+    const z = region.z * 512;
+    return x + 512 >= minWorldX && x <= maxWorldX &&
+      z + 512 >= minWorldZ && z <= maxWorldZ;
+  });
+
+  for (const region of visible) {
+    buildFtbTile(region).then(canvas => {
+      if (token !== ftbRenderToken || !ftbMapVisible) return;
+
+      const x = width / 2 + (region.x * 512 - view.x) * view.scale;
+      const y = height / 2 + (region.z * 512 - view.z) * view.scale;
+
+      canvas.style.left = x + "px";
+      canvas.style.top = y + "px";
+      canvas.style.width = 512 * view.scale + "px";
+      canvas.style.height = 512 * view.scale + "px";
+      ftbMapLayer.append(canvas);
+    }).catch(() => {});
+  }
+}
+
+function fitFtbMap(markInitial = false) {
+  if (!ftbRegions.length || !map) return false;
+
+  const { width, height } = map.getBoundingClientRect();
+  if (!width || !height) return false;
+
+  const minX = Math.min(...ftbRegions.map(region => region.x * 512));
+  const maxX = Math.max(...ftbRegions.map(region => region.x * 512 + 512));
+  const minZ = Math.min(...ftbRegions.map(region => region.z * 512));
+  const maxZ = Math.max(...ftbRegions.map(region => region.z * 512 + 512));
+
+  view.x = (minX + maxX) / 2;
+  view.z = (minZ + maxZ) / 2;
+
+  const padding = 80;
+  const spanX = Math.max(512, maxX - minX);
+  const spanZ = Math.max(512, maxZ - minZ);
+  view.scale = Math.min(
+    4,
+    Math.max(0.35, Math.min((width - padding) / spanX, (height - padding) / spanZ))
+  );
+
+  renderMap();
+  return true;
+}
+
+
+async function loadFtbRegions() {
+  if (!ftbRegionList) return;
+
+  const dimension = ftbDimension?.value?.trim() || "minecraft:overworld";
+  try {
+    const response = await fetch("/api/radar/ftbchunks?dimension=" + encodeURIComponent(dimension), { cache: "no-store" });
+    if (!response.ok) throw new Error("Unable to load FTB Chunks regions");
+    const data = await response.json();
+    ftbRegions = Array.isArray(data.regions) ? data.regions : [];
+
+    const prefix = dimension + "|";
+    for (const key of [...ftbTileCache.keys()]) {
+      if (!key.startsWith(prefix)) continue;
+      if (!ftbRegions.some(region => key.endsWith("|" + region.name))) ftbTileCache.delete(key);
+    }
+
+    if (ftbRegionCount) ftbRegionCount.textContent = ftbRegions.length;
+    ftbRegionList.innerHTML = ftbRegions.length
+      ? ftbRegions.map(region =>
+        '<div class="road-row ftb-region-row"><div><strong>' +
+        escapeHtml(region.name) +
+        '</strong><span>REGION X ' + region.x + ' · Z ' + region.z + ' · ' +
+        region.chunkCount + ' chunks</span></div>' +
+        (radarCanModify
+          ? '<button class="road-delete ftb-region-delete" type="button" data-region="' +
+            escapeHtml(region.name) + '">REMOVE</button>'
+          : '') +
+        '</div>'
+      ).join("")
+      : '<div class="empty-log">No FTB Chunks regions imported.</div>';
+
+    renderMap();
+  } catch (error) {
+    ftbRegions = [];
+    if (ftbRegionCount) ftbRegionCount.textContent = "0";
+    ftbRegionList.innerHTML = '<div class="empty-log">FTB Chunks map unavailable.</div>';
+    ftbStatus.textContent = error.message;
+    renderMap();
+  }
+}
+
+async function importFtbRegions() {
+  if (!radarCanModify || !ftbMapFiles || !ftbMapFiles.files.length) return;
+
+  const dimension = ftbDimension?.value?.trim() || "minecraft:overworld";
+  ftbImportButton.disabled = true;
+  ftbStatus.textContent = "Importing…";
+
+  try {
+    for (const file of ftbMapFiles.files) {
+      const match = file.name.match(/([0-9a-f]{5}-[0-9a-f]{5})/i);
+      if (!match) throw new Error("Could not find an FTB region name in " + file.name);
+
+      const region = match[1].toUpperCase();
+      const response = await fetch(
+        "/api/radar/ftbchunks/import?dimension=" +
+        encodeURIComponent(dimension) + "&region=" + encodeURIComponent(region),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/zip",
+            "X-FTBChunks-Region": region
+          },
+          body: file
+        }
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Unable to import " + file.name);
+
+      const merge = result.merge || {};
+      ftbStatus.textContent = merge.merged
+        ? "Merged " + (merge.updated || 0) + " updated chunks, kept " +
+          (merge.skippedOlder || 0) + " older chunks."
+        : "Imported " + (merge.incomingChunks || 0) + " chunks.";
+    }
+
+    ftbMapFiles.value = "";
+    ftbTileCache = new Map();
+    await loadFtbRegions();
+    fitFtbMap();
+  } catch (error) {
+    ftbStatus.textContent = error.message;
+  } finally {
+    ftbImportButton.disabled = false;
+  }
+}
+
 function renderMap() {
   const { width, height } = map.getBoundingClientRect();
   if (!width || !height) return;
@@ -363,6 +801,7 @@ function renderMap() {
   const offsetZ = height / 2 - ((view.z * view.scale) % grid);
   map.style.backgroundSize = `${grid}px ${grid}px,${grid}px ${grid}px,${grid * 5}px ${grid * 5}px,${grid * 5}px ${grid * 5}px`;
   map.style.backgroundPosition = `${offsetX}px ${offsetZ}px,${offsetX}px ${offsetZ}px,${offsetX}px ${offsetZ}px,${offsetX}px ${offsetZ}px`;
+  renderFtbMap(width, height);
   coordinates.textContent = `X ${Math.round(view.x)} · Z ${Math.round(view.z)} · ${view.scale.toFixed(1)} px/block`;
   for (const road of roads) {
     const point = document.createElement("div");
@@ -371,8 +810,11 @@ function renderMap() {
     const minZ = Math.min(road.z1, road.z2);
     point.style.left = (width / 2 + (minX - view.x) * view.scale) + "px";
     point.style.top = (height / 2 + (minZ - view.z) * view.scale) + "px";
-    point.style.width = Math.max(14, Math.abs(road.x2 - road.x1) * view.scale) + "px";
-    point.style.height = Math.max(14, Math.abs(road.z2 - road.z1) * view.scale) + "px";
+    const roadWidth = Math.max(1, Math.abs(road.x2 - road.x1) * view.scale);
+    const roadHeight = Math.max(1, Math.abs(road.z2 - road.z1) * view.scale);
+    point.style.width = roadWidth + "px";
+    point.style.height = roadHeight + "px";
+    point.classList.toggle("map-tiny", Math.max(roadWidth, roadHeight) < 6);
     point.title = "Road: X " + road.x1 + "–" + road.x2 + ", Z " + road.z1 + "–" + road.z2;
     map.append(point);
   }
@@ -403,8 +845,11 @@ function renderMap() {
     const minZ = Math.min(building.z1, building.z2);
     point.style.left = (width / 2 + (minX - view.x) * view.scale) + "px";
     point.style.top = (height / 2 + (minZ - view.z) * view.scale) + "px";
-    point.style.width = Math.max(14, Math.abs(building.x2 - building.x1) * view.scale) + "px";
-    point.style.height = Math.max(14, Math.abs(building.z2 - building.z1) * view.scale) + "px";
+    const buildingWidth = Math.max(1, Math.abs(building.x2 - building.x1) * view.scale);
+    const buildingHeight = Math.max(1, Math.abs(building.z2 - building.z1) * view.scale);
+    point.style.width = buildingWidth + "px";
+    point.style.height = buildingHeight + "px";
+    point.classList.toggle("map-tiny", Math.max(buildingWidth, buildingHeight) < 32);
     point.title = `${building.name}: X ${building.x1}–${building.x2}, Z ${building.z1}–${building.z2}`;
     const label = document.createElement("span");
     label.textContent = building.name;
@@ -477,6 +922,53 @@ function render(nextPlayers, nextSableContraptions, nextBuildings, nextRoads, up
   ).join("") : '<div class="empty-log">No roads defined.</div>';
   meta.textContent = `${players.length} player${players.length === 1 ? "" : "s"}${sableVisible ? ` · ${sableContraptions.length} SABLE${sableContraptions.length === 1 ? "" : "s"}` : ""}${updatedAt ? " · updated " + new Date(updatedAt).toLocaleTimeString() : ""}`;
 }
+if (showFtbMap) {
+  showFtbMap.addEventListener("change", () => {
+    ftbMapVisible = showFtbMap.checked;
+    localStorage.setItem("radar-show-ftb-map", String(ftbMapVisible));
+    renderMap();
+  });
+}
+
+if (ftbImportButton) {
+  ftbImportButton.addEventListener("click", importFtbRegions);
+}
+if (ftbFitButton) {
+  ftbFitButton.addEventListener("click", () => fitFtbMap(false));
+}
+if (ftbDimension) {
+  ftbDimension.addEventListener("change", () => {
+    ftbTileCache = new Map();
+    loadFtbRegions();
+  });
+}
+
+if (ftbRegionList) {
+  ftbRegionList.addEventListener("click", async event => {
+    const button = event.target.closest(".ftb-region-delete");
+    if (!button || !radarCanModify) return;
+
+    button.disabled = true;
+    const dimension = ftbDimension?.value?.trim() || "minecraft:overworld";
+    try {
+      const response = await fetch(
+        "/api/radar/ftbchunks/region/" +
+        encodeURIComponent(button.dataset.region) +
+        "?dimension=" + encodeURIComponent(dimension),
+        { method: "DELETE" }
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Unable to remove FTB Chunks region");
+      ftbTileCache = new Map();
+      await loadFtbRegions();
+      ftbStatus.textContent = "Region removed.";
+    } catch (error) {
+      ftbStatus.textContent = error.message;
+      button.disabled = false;
+    }
+  });
+}
+
 showSable.addEventListener("change", () => {
   sableVisible = showSable.checked;
   localStorage.setItem("radar-show-sable", String(sableVisible));
