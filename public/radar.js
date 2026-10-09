@@ -748,10 +748,11 @@ function setClaimMode(enabled) {
     claimModeToggle.textContent = claimMode ? "EXIT CLAIM MODE" : "CLAIM MODE";
     claimModeToggle.setAttribute("aria-pressed", String(claimMode));
   }
+  renderClaimsLayer(map.clientWidth, map.clientHeight);
   if (claimMode) {
     const faction = claimFactions.find(item => item.id === activeFactionId);
-    setClaimStatus("Claim Mode active · clicking a chunk adds it to " + (faction?.name || "the selected faction") +
-      ", clicking its own chunk removes it.");
+    setClaimStatus("Claim Mode active · click a chunk to toggle it or drag to claim a rectangle for " +
+      (faction?.name || "the selected faction") + ".");
   } else if (!activeFactionId) {
     setClaimStatus("Select or create a faction before entering Claim Mode.");
   } else {
@@ -778,6 +779,52 @@ function renderClaimsLayer(width, height) {
   const maxChunkX = Math.ceil((view.x + width / (2 * view.scale)) / 16) + 1;
   const minChunkZ = Math.floor((view.z - height / (2 * view.scale)) / 16) - 1;
   const maxChunkZ = Math.ceil((view.z + height / (2 * view.scale)) / 16) + 1;
+
+  // Display the 16 x 16 block chunk grid only while claim editing is active.
+  if (claimMode) {
+    const left = width / 2 + (minChunkX * 16 - view.x) * view.scale;
+    const right = width / 2 + ((maxChunkX + 1) * 16 - view.x) * view.scale;
+    const top = height / 2 + (minChunkZ * 16 - view.z) * view.scale;
+    const bottom = height / 2 + ((maxChunkZ + 1) * 16 - view.z) * view.scale;
+    const step = 16 * view.scale;
+    context.save();
+    context.beginPath();
+    context.rect(0, 0, width, height);
+    context.clip();
+    context.strokeStyle = "rgba(225, 234, 228, 0.34)";
+    context.lineWidth = Math.max(0.65, Math.min(1.15, view.scale * 0.08));
+    context.beginPath();
+    for (let x = left; x <= right + 0.5; x += step) {
+      context.moveTo(Math.round(x) + 0.5, 0);
+      context.lineTo(Math.round(x) + 0.5, height);
+    }
+    for (let y = top; y <= bottom + 0.5; y += step) {
+      context.moveTo(0, Math.round(y) + 0.5);
+      context.lineTo(width, Math.round(y) + 0.5);
+    }
+    context.stroke();
+
+    // Mark every 32 chunks as the boundary between 512-block FTB map regions.
+    context.strokeStyle = "rgba(225, 234, 228, 0.48)";
+    context.lineWidth = Math.max(0.9, Math.min(1.6, view.scale * 0.12));
+    context.beginPath();
+    const firstRegionX = Math.floor(minChunkX / 32);
+    const lastRegionX = Math.ceil((maxChunkX + 1) / 32);
+    const firstRegionZ = Math.floor(minChunkZ / 32);
+    const lastRegionZ = Math.ceil((maxChunkZ + 1) / 32);
+    for (let regionX = firstRegionX; regionX <= lastRegionX; regionX++) {
+      const x = width / 2 + (regionX * 512 - view.x) * view.scale;
+      context.moveTo(Math.round(x) + 0.5, 0);
+      context.lineTo(Math.round(x) + 0.5, height);
+    }
+    for (let regionZ = firstRegionZ; regionZ <= lastRegionZ; regionZ++) {
+      const y = height / 2 + (regionZ * 512 - view.z) * view.scale;
+      context.moveTo(0, Math.round(y) + 0.5);
+      context.lineTo(width, Math.round(y) + 0.5);
+    }
+    context.stroke();
+    context.restore();
+  }
 
   for (const [key, factionId] of Object.entries(claimedChunks)) {
     const faction = factionsById.get(factionId);
