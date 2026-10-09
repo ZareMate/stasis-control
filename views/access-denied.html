@@ -48,6 +48,7 @@
         <dt>Dashboard access check</dt><dd class="debug-value" id="diagDashboardAccess">—</dd>
         <dt>Radar access check</dt><dd class="debug-value" id="diagRadarAccess">—</dd>
         <dt>Lookup source / HTTP status</dt><dd id="diagLookup">—</dd>
+        <dt>Role names lookup</dt><dd id="diagRoleLookup">—</dd>
         <dt>Checked at</dt><dd id="diagCheckedAt">—</dd>
       </dl>
       <div style="margin-top:15px">
@@ -72,6 +73,8 @@
       };
 
       async function loadDiagnostics() {
+        const params = new URLSearchParams(window.location.search);
+        const stayOnDiagnostics = params.get("stay") === "1" || params.get("debug") === "1";
         const query = window.location.search || "";
         try {
           const response = await fetch("/api/auth/debug" + query, { cache: "no-store" });
@@ -90,11 +93,21 @@
           setText("diagRadarAccess", flag(data.radarAccess));
           setText("diagLookup", (data.lookupSource || "unknown") +
             (data.lookupStatus ? " · HTTP " + data.lookupStatus : ""));
+          const roleLookup = data.roleNameLookup || {};
+          setText("diagRoleLookup",
+            (roleLookup.httpStatus ? "HTTP " + roleLookup.httpStatus : "No HTTP result") +
+            (roleLookup.guildRoleCount !== null && roleLookup.guildRoleCount !== undefined
+              ? " · " + roleLookup.guildRoleCount + " guild roles returned" : "") +
+            (roleLookup.knownRoleNames !== undefined ? " · " + roleLookup.knownRoleNames + " names known" : ""));
           setText("diagCheckedAt", safeTime(data.checkedAt));
           setText("diagReason", data.reason || "");
           setText("diagErrors", Array.isArray(data.errors) && data.errors.length
             ? "Lookup notes: " + data.errors.join(" · ")
             : "");
+          if (roleLookup.error) {
+            setText("diagErrors", (byId("diagErrors").textContent ? byId("diagErrors").textContent + "\n" : "") +
+              roleLookup.error);
+          }
 
           const list = byId("diagRoles");
           list.replaceChildren();
@@ -119,6 +132,19 @@
               item.append(name, id);
               list.append(item);
             }
+          }
+
+          // If the latest access checks allow entry, leave the stale access-denied page.
+          // Add ?stay=1 (or ?debug=1) to keep this diagnostics view open for troubleshooting.
+          if (!stayOnDiagnostics && data.dashboardAccess === true) {
+            setText("diagStatus", "Access confirmed · opening dashboard…");
+            window.location.replace("/");
+            return;
+          }
+          if (!stayOnDiagnostics && data.radarAccess === true) {
+            setText("diagStatus", "Radar access confirmed · opening Radar…");
+            window.location.replace("/radar");
+            return;
           }
         } catch (error) {
           setText("diagStatus", "Unable to load diagnostics");
