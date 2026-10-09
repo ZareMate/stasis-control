@@ -337,10 +337,12 @@ stasis.lua
 The Radar process uses `entity.minecraft.ender_pearl` and the configured chamber block ranges. After a successful pull, the Radar process keeps the chamber in `pulled` for `PULLED_DISPLAY_TIME`; after that it resumes live Radar detection and reports `ready` or `empty` based on the pearl's presence.
 
 
-## FTB Chunks map support (feature branch)
+## FTB Chunks map and faction claims
 
-The `feature/ftbchunks-map` branch adds experimental support for importing FTB Chunks region-cache ZIPs into the Radar map. FTB Chunks stores world map data as 512 × 512 block regions, with `data.png`, `grass.png`, `foliage.png`, `water.png`, `blocks.png`, and `chunks.dat` inside each region archive. citeturn380616view0
+Radar supports importing FTB Chunks region-cache ZIPs. FTB Chunks stores world map data as 512 × 512 block regions, with `data.png`, `grass.png`, `foliage.png`, `water.png`, `blocks.png`, and `chunks.dat` inside each region archive. citeturn380616view0
 
 Full-access Radar users can upload region ZIPs from the Radar page. Imported regions are stored below `STASIS_FTBCHUNKS_DIR` (default: `data/ftbchunks`) and viewer users can see the imported terrain layer without access to the import/remove controls.
 
-The web renderer currently reconstructs a terrain image from the FTB biome layers rather than reproducing the Minecraft client renderer pixel-for-pixel. Exact FTB map appearance would require the corresponding Minecraft block-color resources and client-side rendering rules.
+Full-access users can also create factions and assign colors in the **Faction claims** panel. Choose a faction, enable **Claim Mode**, then click a chunk inside an imported region. An unclaimed chunk is assigned to the selected faction; clicking a chunk already owned by that faction removes it; clicking a chunk belonging to another faction transfers it. Adjacent chunks of the same faction render as one connected territory without internal borders. Faction names, colors, and claims are stored in `data/radar-claims.json` (or under `STASIS_DATA_DIR`); claims are stored separately for each dimension and are shared with Radar viewers.
+
+The web renderer reconstructs terrain from FTB's map image layers rather than reproducing the Minecraft client renderer pixel-for-pixel.
