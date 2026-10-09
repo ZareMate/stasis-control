@@ -17,6 +17,16 @@ const ftbFitButton = document.getElementById("ftbFitButton");
 const ftbStatus = document.getElementById("ftbStatus");
 const ftbRegionList = document.getElementById("ftbRegionList");
 const ftbRegionCount = document.getElementById("ftbRegionCount");
+const claimModeToggle = document.getElementById("claimModeToggle");
+const claimsPanel = document.getElementById("claimsPanel");
+const claimsLayer = document.getElementById("claimsLayer");
+const claimFactionSelect = document.getElementById("claimFactionSelect");
+const claimStatus = document.getElementById("claimStatus");
+const claimChunkCount = document.getElementById("claimChunkCount");
+const claimFactionForm = document.getElementById("claimFactionForm");
+const claimFactionName = document.getElementById("claimFactionName");
+const claimFactionColor = document.getElementById("claimFactionColor");
+const claimFactionList = document.getElementById("claimFactionList");
 const sablePanel = document.getElementById("sablePanel");
 const sableLegend = document.getElementById("sableLegend");
 const radarShell = map.closest(".radar-shell");
@@ -44,6 +54,12 @@ const roadCount = document.getElementById("roadCount");
 let socket, reconnectTimer, players = [], sableContraptions = [], buildings = [], roads = [];
 let radarCanModify = false;
 let ftbRegions = [];
+let claimFactions = [];
+let claimedChunks = {};
+let activeFactionId = "";
+let claimMode = false;
+let claimDimension = "minecraft:overworld";
+let pendingClaimChunks = new Set();
 let ftbTileCache = new Map();
 let ftbRenderToken = 0;
 let ftbPalette = { blockByIndex: {}, colors: {}, types: {} };
@@ -88,12 +104,13 @@ async function loadRadarPermissions() {
     ftbChunksPanel.hidden = !radarCanModify;
     ftbChunksPanel.setAttribute("aria-hidden", String(!radarCanModify));
   }
-
-  if (radarCanModify) {
-    await loadFtbRegions();
-  } else {
-    await loadFtbRegions();
+  if (claimsPanel) {
+    claimsPanel.hidden = !radarCanModify;
+    claimsPanel.setAttribute("aria-hidden", String(!radarCanModify));
   }
+  if (claimModeToggle) claimModeToggle.hidden = !radarCanModify;
+
+  await Promise.all([loadFtbRegions(), loadClaims()]);
 
   return true;
 }
