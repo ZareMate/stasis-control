@@ -881,7 +881,7 @@ function render(nextPlayers, nextSableContraptions, nextBuildings, nextRoads, up
   buildings = nextBuildings;
   roads = nextRoads;
   renderMap();
-  sablePanel.classList.toggle("sable-hidden", !sableVisible);
+  // Keep the SABLE list visible; the layout moves it below the map when markers are off.
   sableLegend.classList.toggle("sable-hidden", !sableVisible);
   radarShell.classList.toggle("sable-filtered", !sableVisible);
   list.innerHTML = players.length ? players.map((player, index) => {
