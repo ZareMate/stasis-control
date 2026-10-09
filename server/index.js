@@ -760,7 +760,7 @@ function loadRadarClaims() {
         const chunks = {};
         if (entry.chunks && typeof entry.chunks === "object" && !Array.isArray(entry.chunks)) {
           for (const [key, factionId] of Object.entries(entry.chunks)) {
-            const match = key.match(/^(-?\\d+),(-?\\d+)$/);
+            const match = key.match(/^(-?\d+),(-?\d+)$/);
             if (!match || !factionIds.has(factionId)) continue;
             const x = Number(match[1]), z = Number(match[2]);
             if (Number.isSafeInteger(x) && Number.isSafeInteger(z) && Math.abs(x) <= 2000000 && Math.abs(z) <= 2000000) {
@@ -780,7 +780,7 @@ function loadRadarClaims() {
 function saveRadarClaims() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const temporary = RADAR_CLAIMS_FILE + ".tmp";
-  fs.writeFileSync(temporary, JSON.stringify(radarClaims, null, 2) + "\\n", { encoding: "utf8", mode: 0o600 });
+  fs.writeFileSync(temporary, JSON.stringify(radarClaims, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
   fs.chmodSync(temporary, 0o600);
   fs.renameSync(temporary, RADAR_CLAIMS_FILE);
 }
