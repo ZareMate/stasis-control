@@ -646,6 +646,211 @@ async function buildFtbTile(region) {
     throw error;
   }
 }
+
+function escapeAttribute(value) {
+  return escapeHtml(value).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function currentClaimDimension() {
+  return ftbDimension?.value?.trim() || "minecraft:overworld";
+}
+
+function setClaimStatus(message) {
+  if (claimStatus) claimStatus.textContent = message;
+}
+
+function renderClaimFactionControls() {
+  if (claimFactionSelect) {
+    const previous = activeFactionId;
+    if (!claimFactions.some(faction => faction.id === activeFactionId)) {
+      activeFactionId = claimFactions[0]?.id || "";
+    }
+    claimFactionSelect.innerHTML = claimFactions.length
+      ? claimFactions.map(faction =>
+          '<option value="' + escapeAttribute(faction.id) + '"' +
+          (faction.id === activeFactionId ? " selected" : "") + '>' +
+          escapeHtml(faction.name) + '</option>'
+        ).join("")
+      : '<option value="">Create a faction first</option>';
+    claimFactionSelect.disabled = !claimFactions.length || !radarCanModify;
+    if (previous !== activeFactionId && claimMode && !activeFactionId) setClaimMode(false);
+  }
+
+  if (claimFactionList) {
+    claimFactionList.innerHTML = claimFactions.length
+      ? claimFactions.map(faction => {
+          const selected = faction.id === activeFactionId;
+          return '<div class="claim-faction-row' + (selected ? ' is-active' : '') +
+            '" data-faction-id="' + escapeAttribute(faction.id) + '">' +
+            '<div class="claim-faction-fields">' +
+            '<span class="claim-color-swatch" style="background:' + faction.color + '"></span>' +
+            '<input class="claim-faction-name-edit" data-claim-name type="text" maxlength="40" value="' +
+              escapeAttribute(faction.name) + '" aria-label="Faction name">' +
+            '<input class="claim-faction-color-edit" data-claim-color type="color" value="' +
+              faction.color + '" aria-label="Faction color">' +
+            '</div>' +
+            '<div class="claim-faction-actions">' +
+            '<button type="button" data-claim-action="select" data-faction-id="' + escapeAttribute(faction.id) + '"' +
+              (selected ? ' disabled' : '') + '>' + (selected ? 'SELECTED' : 'USE') + '</button>' +
+            '<button type="button" data-claim-action="save" data-faction-id="' + escapeAttribute(faction.id) + '">SAVE</button>' +
+            '<button type="button" data-claim-action="delete" data-faction-id="' + escapeAttribute(faction.id) + '">DELETE</button>' +
+            '</div></div>';
+        }).join("")
+      : '<div class="empty-log">No factions yet. Add one above to start claiming chunks.</div>';
+  }
+
+  if (claimChunkCount) claimChunkCount.textContent = Object.keys(claimedChunks).length;
+  if (claimModeToggle) {
+    claimModeToggle.textContent = claimMode ? "EXIT CLAIM MODE" : "CLAIM MODE";
+    claimModeToggle.setAttribute("aria-pressed", String(claimMode));
+  }
+}
+
+async function loadClaims() {
+  const dimension = currentClaimDimension();
+  try {
+    const response = await fetch("/api/radar/claims?dimension=" + encodeURIComponent(dimension), { cache: "no-store" });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Unable to load faction claims");
+    if (dimension !== currentClaimDimension()) return;
+
+    claimDimension = dimension;
+    claimFactions = Array.isArray(result.factions) ? result.factions : [];
+    claimedChunks = result.chunks && typeof result.chunks === "object" ? result.chunks : {};
+    if (!claimFactions.some(faction => faction.id === activeFactionId)) {
+      activeFactionId = claimFactions[0]?.id || "";
+    }
+    renderClaimFactionControls();
+    renderMap();
+    if (!claimFactions.length) setClaimStatus("Add a faction before entering Claim Mode.");
+    else if (claimMode) setClaimStatus("Claim Mode is active · selected faction: " + (claimFactions.find(f => f.id === activeFactionId)?.name || "none"));
+  } catch (error) {
+    setClaimStatus(error.message);
+  }
+}
+
+function setClaimMode(enabled) {
+  claimMode = Boolean(enabled && radarCanModify && activeFactionId);
+  map.classList.toggle("claim-mode", claimMode);
+  if (claimModeToggle) {
+    claimModeToggle.textContent = claimMode ? "EXIT CLAIM MODE" : "CLAIM MODE";
+    claimModeToggle.setAttribute("aria-pressed", String(claimMode));
+  }
+  if (claimMode) {
+    const faction = claimFactions.find(item => item.id === activeFactionId);
+    setClaimStatus("Claim Mode active · clicking a chunk adds it to " + (faction?.name || "the selected faction") +
+      ", clicking its own chunk removes it.");
+  } else if (!activeFactionId) {
+    setClaimStatus("Select or create a faction before entering Claim Mode.");
+  } else {
+    setClaimStatus("Claim Mode off · pan and zoom the map normally.");
+  }
+}
+
+function renderClaimsLayer(width, height) {
+  if (!claimsLayer) return;
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  const canvasWidth = Math.max(1, Math.round(width * dpr));
+  const canvasHeight = Math.max(1, Math.round(height * dpr));
+  if (claimsLayer.width !== canvasWidth) claimsLayer.width = canvasWidth;
+  if (claimsLayer.height !== canvasHeight) claimsLayer.height = canvasHeight;
+  const context = claimsLayer.getContext("2d");
+  if (!context) return;
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.clearRect(0, 0, width, height);
+
+  const factionsById = new Map(claimFactions.map(faction => [faction.id, faction]));
+  const size = 16 * view.scale;
+  const visibleChunks = [];
+  const minChunkX = Math.floor((view.x - width / (2 * view.scale)) / 16) - 1;
+  const maxChunkX = Math.ceil((view.x + width / (2 * view.scale)) / 16) + 1;
+  const minChunkZ = Math.floor((view.z - height / (2 * view.scale)) / 16) - 1;
+  const maxChunkZ = Math.ceil((view.z + height / (2 * view.scale)) / 16) + 1;
+
+  for (const [key, factionId] of Object.entries(claimedChunks)) {
+    const faction = factionsById.get(factionId);
+    if (!faction) continue;
+    const [chunkX, chunkZ] = key.split(",").map(Number);
+    if (!Number.isInteger(chunkX) || !Number.isInteger(chunkZ) ||
+        chunkX < minChunkX || chunkX > maxChunkX || chunkZ < minChunkZ || chunkZ > maxChunkZ) continue;
+    visibleChunks.push({ chunkX, chunkZ, faction });
+  }
+
+  const chunkKey = (x, z) => x + "," + z;
+  const borderWidth = Math.max(0.65, Math.min(2, view.scale * 0.7));
+  for (const item of visibleChunks) {
+    const { chunkX, chunkZ, faction } = item;
+    const x = width / 2 + (chunkX * 16 - view.x) * view.scale;
+    const y = height / 2 + (chunkZ * 16 - view.z) * view.scale;
+    context.globalAlpha = 0.24;
+    context.fillStyle = faction.color;
+    context.fillRect(x, y, size + 0.4, size + 0.4);
+    context.globalAlpha = 0.92;
+    context.strokeStyle = faction.color;
+    context.lineWidth = borderWidth;
+    context.beginPath();
+
+    if (claimedChunks[chunkKey(chunkX, chunkZ - 1)] !== faction.id) {
+      context.moveTo(x, y); context.lineTo(x + size, y);
+    }
+    if (claimedChunks[chunkKey(chunkX + 1, chunkZ)] !== faction.id) {
+      context.moveTo(x + size, y); context.lineTo(x + size, y + size);
+    }
+    if (claimedChunks[chunkKey(chunkX, chunkZ + 1)] !== faction.id) {
+      context.moveTo(x + size, y + size); context.lineTo(x, y + size);
+    }
+    if (claimedChunks[chunkKey(chunkX - 1, chunkZ)] !== faction.id) {
+      context.moveTo(x, y + size); context.lineTo(x, y);
+    }
+    context.stroke();
+  }
+  context.globalAlpha = 1;
+}
+
+async function toggleClaimAt(event) {
+  if (!claimMode || !radarCanModify || !activeFactionId) return;
+  const world = worldAt(event.clientX, event.clientY);
+  const x = Math.floor(world.x / 16);
+  const z = Math.floor(world.z / 16);
+  const regionX = Math.floor(x / 32);
+  const regionZ = Math.floor(z / 32);
+  if (!ftbRegions.some(region => region.x === regionX && region.z === regionZ)) {
+    setClaimStatus("Import the FTB region for chunk X " + x + ", Z " + z + " before claiming it.");
+    return;
+  }
+  const key = x + "," + z;
+  if (pendingClaimChunks.has(key)) return;
+  pendingClaimChunks.add(key);
+  setClaimStatus("Saving chunk X " + x + ", Z " + z + "…");
+
+  try {
+    const response = await fetch("/api/radar/claims/chunk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dimension: currentClaimDimension(),
+        x,
+        z,
+        factionId: activeFactionId
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Unable to update chunk claim");
+    if (result.removed) delete claimedChunks[key];
+    else claimedChunks[key] = result.factionId;
+    if (claimChunkCount) claimChunkCount.textContent = Object.keys(claimedChunks).length;
+    renderClaimsLayer(map.clientWidth, map.clientHeight);
+    const faction = claimFactions.find(item => item.id === activeFactionId);
+    setClaimStatus(result.removed
+      ? "Removed chunk X " + x + ", Z " + z + " from " + (faction?.name || "the faction") + "."
+      : "Claimed chunk X " + x + ", Z " + z + " for " + (faction?.name || "the faction") + ".");
+  } catch (error) {
+    setClaimStatus(error.message);
+  } finally {
+    pendingClaimChunks.delete(key);
+  }
+}
+
 function renderFtbMap(width, height) {
   if (!ftbMapLayer) return;
 
