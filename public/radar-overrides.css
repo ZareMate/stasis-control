@@ -1225,3 +1225,40 @@ html,body.radar-page{
   .claim-faction-form button{grid-column:1/-1}
   .claim-faction-list{grid-template-columns:1fr}
 }
+
+
+.radar-claim-legend{
+  position:absolute;
+  z-index:4;
+  top:48px;
+  left:10px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:5px;
+  max-width:min(70%,520px);
+  pointer-events:none;
+}
+.radar-claim-legend[hidden]{display:none!important}
+.claim-legend-item{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  max-width:190px;
+  padding:5px 7px;
+  overflow:hidden;
+  border:1px solid #303632;
+  border-radius:6px;
+  background:rgba(15,18,16,.92);
+  color:#e2e6e3;
+  font:600 9px/1.2 "Inter",ui-sans-serif,system-ui,sans-serif;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.claim-legend-item i{
+  display:inline-block;
+  flex:0 0 8px;
+  width:8px;
+  height:8px;
+  border-radius:2px;
+  box-shadow:0 0 5px currentColor;
+}
