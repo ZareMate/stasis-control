@@ -867,7 +867,8 @@ function renderMap() {
     point.style.left = (width / 2 + (sable.x - view.x) * view.scale) + "px";
     point.style.top = (height / 2 + (sable.z - view.z) * view.scale) + "px";
     point.title = displayName +
-      ": X " + sable.x + ", Y " + sable.y + ", Z " + sable.z;
+      (sable.id ? " · UUID: " + sable.id : "") +
+      " · X " + sable.x + ", Y " + sable.y + ", Z " + sable.z;
     const label = document.createElement("span");
     label.textContent = displayName;
     point.append(label);
@@ -890,22 +891,25 @@ function render(nextPlayers, nextSableContraptions, nextBuildings, nextRoads, up
   sableList.innerHTML = sableContraptions.length ? sableContraptions.map((sable, index) => {
     const number = sable.number || index + 1;
     const name = sable.name || "";
-    const id = escapeHtml(sable.id || "");
+    const displayName = name || "SABLE " + number;
+    const uuid = String(sable.id || "");
+    const id = escapeHtml(uuid).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
     const safeName = escapeHtml(name).replace(/"/g, "&quot;");
+    const safeDisplayName = escapeHtml(displayName);
     const disabled = !radarCanModify || !sable.id ? " disabled" : "";
     return '<div class="radar-sable-row">' +
       '<div class="radar-sable-info">' +
-      '<strong><i></i>SABLE ' + number + '</strong>' +
+      '<strong title="' + (uuid ? "UUID: " + id : "UUID unavailable") + '"><i></i>' + safeDisplayName + '</strong>' +
       '<span>X ' + Math.round(sable.x) + ' · Y ' + Math.round(sable.y) + ' · Z ' + Math.round(sable.z) +
       (sable.entityType ? ' · ' + escapeHtml(sable.entityType) : '') + '</span>' +
       '</div>' +
-      radarCanModify
+      (radarCanModify
         ? '<div class="sable-name-edit">' +
           '<input class="sable-name-input" type="text" maxlength="40" autocomplete="off" placeholder="Custom name" value="' + safeName + '" data-sable-id="' + id + '"' + disabled + '>' +
           '<button class="sable-save" type="button" data-sable-id="' + id + '"' + disabled + '>SAVE</button>' +
           '</div>' +
           '<div class="sable-save-status" aria-live="polite"></div>'
-        : '<div class="sable-save-status sable-read-only">View only</div>' +
+        : '<div class="sable-save-status sable-read-only">View only</div>') +
       '</div>';
   }).join("") : '<div class="empty-log">No SABLE contraptions detected.</div>';
   if (buildingCount) buildingCount.textContent = buildings.length;
