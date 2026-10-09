@@ -33,7 +33,22 @@ function debugLog(...args) {
   }
 }
 
+function writeAuthDebugLog(entry) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.appendFileSync(
+      AUTH_DEBUG_LOG_FILE,
+      JSON.stringify({ loggedAt: new Date().toISOString(), ...entry }) + "\n",
+      { encoding: "utf8", mode: 0o600 }
+    );
+    fs.chmodSync(AUTH_DEBUG_LOG_FILE, 0o600);
+  } catch (error) {
+    console.error("[Auth] Unable to write auth debug log:", error.message);
+  }
+}
+
 const DATA_DIR = process.env.STASIS_DATA_DIR || path.join(ROOT, "data");
+const AUTH_DEBUG_LOG_FILE = path.join(DATA_DIR, "auth-debug.log");
 const PREFERENCES_FILE = path.join(DATA_DIR, "player-preferences.json");
 const LOGS_FILE = path.join(DATA_DIR, "activity-logs.json");
 const DISCORD_USERS_FILE = path.join(DATA_DIR, "discord-users.json");
@@ -360,6 +375,199 @@ async function userHasRadarRole(session) {
   } finally {
     radarRoleCheckPromises.delete(userId);
   }
+}
+
+let discordRoleNameCache = { expiresAt: 0, names: {} };
+
+async function discordRoleNames() {
+  const now = Date.now();
+  if (discordRoleNameCache.expiresAt > now) return discordRoleNameCache.names;
+
+  const names = {
+    [REQUIRED_ROLE_ID]: "Stasis Control access",
+    [RADAR_VIEW_ROLE_ID]: "Radar viewer"
+  };
+
+  if (DISCORD_BOT_TOKEN) {
+    try {
+      const response = await fetch(
+        `https://discord.com/api/v10/guilds/${ACCESS_GUILD_ID}/roles`,
+        {
+          headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}` },
+          signal: AbortSignal.timeout(5000)
+        }
+      );
+      if (response.ok) {
+        const roles = await response.json();
+        for (const role of roles) {
+          if (role?.id && role?.name) names[String(role.id)] = String(role.name);
+        }
+      }
+    } catch (error) {
+      console.warn("[Auth] Unable to load Discord role names:", error.message);
+    }
+  }
+
+  discordRoleNameCache = { expiresAt: now + 10 * 60 * 1000, names };
+  return names;
+}
+
+async function diagnoseDiscordAccess(session) {
+  const user = session?.user || null;
+  const base = {
+    authenticated: Boolean(user?.id),
+    username: user?.username || null,
+    discordId: user?.id ? String(user.id) : null,
+    guildId: ACCESS_GUILD_ID,
+    requiredRoleId: REQUIRED_ROLE_ID,
+    radarViewerRoleId: RADAR_VIEW_ROLE_ID,
+    checkedAt: new Date().toISOString()
+  };
+
+  if (!user?.id) {
+    return {
+      ...base,
+      testSession: false,
+      guildMember: null,
+      lookupSource: "none",
+      lookupStatus: null,
+      roles: null,
+      requiredRoleDetected: null,
+      radarViewerDetected: null,
+      dashboardAccess: false,
+      radarAccess: false,
+      reason: "No active Discord session. Log in with Discord first."
+    };
+  }
+
+  if (session.testRole) {
+    const ids = session.testRole === "full"
+      ? [REQUIRED_ROLE_ID, RADAR_VIEW_ROLE_ID]
+      : session.testRole === "viewer"
+        ? [RADAR_VIEW_ROLE_ID]
+        : [];
+    const names = await discordRoleNames();
+    return {
+      ...base,
+      testSession: true,
+      testRole: session.testRole,
+      guildMember: null,
+      guildMembership: "Simulated local test session",
+      lookupSource: "local test mode",
+      lookupStatus: null,
+      roles: ids.map(id => ({ id, name: names[id] || "Role" })),
+      requiredRoleDetected: ids.includes(REQUIRED_ROLE_ID),
+      radarViewerDetected: ids.includes(RADAR_VIEW_ROLE_ID),
+      dashboardAccess: session.testRole === "full",
+      radarAccess: session.testRole === "full" || session.testRole === "viewer",
+      reason: "This is simulated localhost test data; no Discord lookup was performed."
+    };
+  }
+
+  const errors = [];
+  let member = null;
+  let lookupSource = "none";
+  let lookupStatus = null;
+  let oauthStatus = null;
+  let botStatus = null;
+
+  if (await refreshDiscordToken(session) && session.accessToken) {
+    try {
+      const response = await fetch(
+        `https://discord.com/api/v10/users/@me/guilds/${ACCESS_GUILD_ID}/member`,
+        {
+          headers: { Authorization: `Bearer ${session.accessToken}` },
+          signal: AbortSignal.timeout(5000)
+        }
+      );
+      oauthStatus = response.status;
+      if (response.ok) {
+        member = await response.json();
+        lookupSource = "Discord OAuth";
+        lookupStatus = response.status;
+      } else {
+        errors.push("OAuth member lookup returned HTTP " + response.status);
+      }
+    } catch (error) {
+      errors.push("OAuth member lookup failed: " + error.message);
+    }
+  } else {
+    errors.push("Discord OAuth access token could not be refreshed");
+  }
+
+  if (!member && DISCORD_BOT_TOKEN) {
+    try {
+      const response = await fetch(
+        `https://discord.com/api/v10/guilds/${ACCESS_GUILD_ID}/members/${encodeURIComponent(String(user.id))}`,
+        {
+          headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}` },
+          signal: AbortSignal.timeout(5000)
+        }
+      );
+      botStatus = response.status;
+      if (response.ok) {
+        member = await response.json();
+        lookupSource = "Discord bot";
+        lookupStatus = response.status;
+      } else {
+        errors.push("Bot member lookup returned HTTP " + response.status);
+      }
+    } catch (error) {
+      errors.push("Bot member lookup failed: " + error.message);
+    }
+  }
+
+  const roleNames = await discordRoleNames();
+  const roleIds = Array.isArray(member?.roles)
+    ? member.roles.map(id => String(id))
+    : null;
+  const roles = roleIds
+    ? roleIds.map(id => ({ id, name: roleNames[id] || "Unknown role" }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+    : null;
+  const requiredRoleDetected = roleIds ? roleIds.includes(REQUIRED_ROLE_ID) : null;
+  const radarViewerDetected = roleIds ? roleIds.includes(RADAR_VIEW_ROLE_ID) : null;
+  const guildMember = member
+    ? true
+    : (oauthStatus === 404 || botStatus === 404 ? false : null);
+
+  let dashboardAccess = null;
+  let radarAccess = null;
+  try {
+    [dashboardAccess, radarAccess] = await Promise.all([
+      userHasRequiredRole(session),
+      userHasRadarRole(session)
+    ]);
+  } catch (error) {
+    errors.push("Application role check failed: " + error.message);
+  }
+
+  let reason;
+  if (guildMember === false) reason = "Account was not found as a member of the configured Discord server.";
+  else if (requiredRoleDetected === false && radarViewerDetected === false) reason = "Neither configured access role was found on the Discord member.";
+  else if (requiredRoleDetected === false && radarViewerDetected === true) reason = "Radar viewer role detected, but the Stasis Control access role is missing.";
+  else if (requiredRoleDetected === true) reason = "Stasis Control access role detected.";
+  else if (guildMember === null) reason = "Discord could not confirm guild membership or role assignments.";
+  else reason = "Discord member data was returned; review the detected roles and access checks.";
+
+  return {
+    ...base,
+    testSession: false,
+    guildMember,
+    guildMembership: guildMember === true ? "Yes" : guildMember === false ? "No" : "Unable to verify",
+    lookupSource,
+    lookupStatus,
+    oauthStatus,
+    botStatus,
+    roles,
+    requiredRoleDetected,
+    radarViewerDetected,
+    dashboardAccess,
+    radarAccess,
+    rememberedRole: hasRememberedRole(user.id),
+    reason,
+    errors
+  };
 }
 
 async function requireRadarRole(req, res, next) {
@@ -1020,6 +1228,57 @@ app.get("/auth/discord/callback", async (req, res) => {
     console.error("[Auth] Discord login failed:", error.message);
     res.redirect("/access-denied?login=failed");
   }
+});
+
+app.get("/api/auth/debug", async (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const session = requestSession(req);
+  let diagnostic;
+  try {
+    diagnostic = await diagnoseDiscordAccess(session);
+  } catch (error) {
+    diagnostic = {
+      authenticated: Boolean(session?.user?.id),
+      username: session?.user?.username || null,
+      discordId: session?.user?.id ? String(session.user.id) : null,
+      guildId: ACCESS_GUILD_ID,
+      requiredRoleId: REQUIRED_ROLE_ID,
+      radarViewerRoleId: RADAR_VIEW_ROLE_ID,
+      guildMember: null,
+      guildMembership: "Unable to verify",
+      lookupSource: "error",
+      roles: null,
+      requiredRoleDetected: null,
+      radarViewerDetected: null,
+      dashboardAccess: null,
+      radarAccess: null,
+      reason: "Unable to retrieve Discord diagnostics.",
+      errors: [error.message]
+    };
+  }
+
+  writeAuthDebugLog({
+    event: "access-denied-diagnostics",
+    ip: clientIp(req),
+    path: req.originalUrl || req.path,
+    user: diagnostic.username,
+    discordId: diagnostic.discordId,
+    guildId: diagnostic.guildId,
+    guildMember: diagnostic.guildMember,
+    lookupSource: diagnostic.lookupSource,
+    lookupStatus: diagnostic.lookupStatus,
+    roleIds: Array.isArray(diagnostic.roles) ? diagnostic.roles.map(role => role.id) : null,
+    roles: diagnostic.roles,
+    requiredRoleDetected: diagnostic.requiredRoleDetected,
+    radarViewerDetected: diagnostic.radarViewerDetected,
+    dashboardAccess: diagnostic.dashboardAccess,
+    radarAccess: diagnostic.radarAccess,
+    rememberedRole: diagnostic.rememberedRole || false,
+    reason: diagnostic.reason,
+    errors: diagnostic.errors || []
+  });
+
+  res.json(diagnostic);
 });
 
 app.get("/api/auth", (req, res) => {
