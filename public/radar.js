@@ -664,7 +664,9 @@ function renderClaimFactionControls() {
   if (claimFactionSelect) {
     const previous = activeFactionId;
     if (!claimFactions.some(faction => faction.id === activeFactionId)) {
+      const previousActiveFaction = activeFactionId;
       activeFactionId = claimFactions[0]?.id || "";
+      if (claimMode && previousActiveFaction !== activeFactionId) setClaimMode(false);
     }
     claimFactionSelect.innerHTML = claimFactions.length
       ? claimFactions.map(faction =>
@@ -1023,6 +1025,7 @@ function renderMap() {
     players.length > 0 ||
     buildings.length > 0 ||
     roads.length > 0 ||
+    Object.keys(claimedChunks).length > 0 ||
     (sableVisible && sableContraptions.length > 0);
 
   empty.hidden = hasVisibleRadarData;
