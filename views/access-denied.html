@@ -9,10 +9,23 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&display=swap">
   <link rel="stylesheet" href="/style.css?v=modrinth-20261008">
   <style>
-    .denied{width:min(520px,90vw);margin:12vh auto;padding:34px;border:1px solid var(--line);background:var(--panel);text-align:center}
-    .denied h2{font-size:32px;margin:12px 0}
+    .denied{width:min(640px,92vw);margin:7vh auto;padding:28px;border:1px solid var(--line);background:var(--panel);text-align:center}
+    .denied h2{font-size:30px;margin:12px 0}
     .denied p{color:var(--muted);line-height:1.7}
     .denied a{display:inline-block;margin-top:14px;color:var(--accent2);font-size:12px;text-decoration:none}
+    .auth-debug{margin-top:24px;padding:16px;border:1px solid var(--line);background:var(--panel2);text-align:left}
+    .auth-debug h3{margin:0;font-size:14px}
+    .debug-subtitle{margin:6px 0 14px!important;font-size:11px}
+    .debug-grid{display:grid;grid-template-columns:minmax(140px,.8fr) minmax(0,1.2fr);gap:8px 12px;margin:0;font-size:12px}
+    .debug-grid dt{color:var(--muted)}
+    .debug-grid dd{margin:0;overflow-wrap:anywhere;color:var(--text)}
+    .debug-grid code,.debug-role code{font:10px/1.5 ui-monospace,SFMono-Regular,monospace;color:var(--muted);overflow-wrap:anywhere}
+    .debug-value{font-weight:600}
+    #diagRoles{display:grid;gap:6px;list-style:none;margin:8px 0 0;padding:0}
+    .debug-role{display:flex;flex-direction:column;gap:1px;padding:7px 8px;border:1px solid var(--line);background:var(--panel)}
+    .debug-note{margin:12px 0 0!important;font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere}
+    .debug-log-note{margin-top:12px!important;padding-top:10px;border-top:1px solid var(--line);font-size:10px!important}
+    @media(max-width:520px){.denied{padding:20px 14px}.debug-grid{grid-template-columns:1fr;gap:3px}.debug-grid dd{margin-bottom:8px}}
   </style>
 </head>
 <body>
@@ -21,6 +34,100 @@
     <h2>Contact Dons via Discord</h2>
     <p>Your Discord account needs the Stasis Control access role to pull pearls or view activity logs.</p>
     <a href="/">BACK TO DASHBOARD</a>
+
+    <section class="auth-debug" aria-labelledby="debugTitle">
+      <h3 id="debugTitle">Discord access diagnostics</h3>
+      <p class="debug-subtitle" id="diagStatus" aria-live="polite">Checking your Discord session and roles…</p>
+      <dl class="debug-grid">
+        <dt>Discord account</dt><dd class="debug-value" id="diagUsername">—</dd>
+        <dt>Discord user ID</dt><dd id="diagDiscordId">—</dd>
+        <dt>Guild ID</dt><dd id="diagGuildId">—</dd>
+        <dt>Member of guild</dt><dd class="debug-value" id="diagGuildMember">—</dd>
+        <dt>Stasis Control access role</dt><dd class="debug-value" id="diagRequiredRole">—</dd>
+        <dt>Radar viewer role</dt><dd class="debug-value" id="diagRadarRole">—</dd>
+        <dt>Dashboard access check</dt><dd class="debug-value" id="diagDashboardAccess">—</dd>
+        <dt>Radar access check</dt><dd class="debug-value" id="diagRadarAccess">—</dd>
+        <dt>Lookup source / HTTP status</dt><dd id="diagLookup">—</dd>
+        <dt>Checked at</dt><dd id="diagCheckedAt">—</dd>
+      </dl>
+      <div style="margin-top:15px">
+        <strong style="font-size:12px">Roles detected</strong>
+        <ul id="diagRoles"><li class="debug-subtitle">Loading roles…</li></ul>
+      </div>
+      <p class="debug-note" id="diagReason"></p>
+      <p class="debug-note" id="diagErrors"></p>
+      <p class="debug-log-note">This diagnostic snapshot is also appended to the server file <code>data/auth-debug.log</code> (or the directory configured by <code>STASIS_DATA_DIR</code>).</p>
+    </section>
   </main>
+
+  <script>
+    (() => {
+      const byId = id => document.getElementById(id);
+      const setText = (id, value) => { byId(id).textContent = value == null || value === "" ? "—" : String(value); };
+      const flag = value => value === true ? "Detected / Yes" : value === false ? "Missing / No" : "Unable to verify";
+      const safeTime = value => {
+        if (!value) return "—";
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+      };
+
+      async function loadDiagnostics() {
+        const query = window.location.search || "";
+        try {
+          const response = await fetch("/api/auth/debug" + query, { cache: "no-store" });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "HTTP " + response.status);
+
+          setText("diagStatus", data.testSession ? "Local test session · simulated data" :
+            data.authenticated ? "Signed in · diagnostics are for your own session" : "No active Discord session");
+          setText("diagUsername", data.username || "Not signed in");
+          setText("diagDiscordId", data.discordId || "Unavailable");
+          setText("diagGuildId", data.guildId);
+          setText("diagGuildMember", data.guildMembership || flag(data.guildMember));
+          setText("diagRequiredRole", flag(data.requiredRoleDetected) + " · " + data.requiredRoleId);
+          setText("diagRadarRole", flag(data.radarViewerDetected) + " · " + data.radarViewerRoleId);
+          setText("diagDashboardAccess", flag(data.dashboardAccess));
+          setText("diagRadarAccess", flag(data.radarAccess));
+          setText("diagLookup", (data.lookupSource || "unknown") +
+            (data.lookupStatus ? " · HTTP " + data.lookupStatus : ""));
+          setText("diagCheckedAt", safeTime(data.checkedAt));
+          setText("diagReason", data.reason || "");
+          setText("diagErrors", Array.isArray(data.errors) && data.errors.length
+            ? "Lookup notes: " + data.errors.join(" · ")
+            : "");
+
+          const list = byId("diagRoles");
+          list.replaceChildren();
+          if (data.roles === null) {
+            const item = document.createElement("li");
+            item.className = "debug-subtitle";
+            item.textContent = "Could not retrieve the role list. Check the lookup status and notes above.";
+            list.append(item);
+          } else if (!data.roles.length) {
+            const item = document.createElement("li");
+            item.className = "debug-subtitle";
+            item.textContent = data.testSession ? "No roles in this simulated test." : "No roles detected.";
+            list.append(item);
+          } else {
+            for (const role of data.roles) {
+              const item = document.createElement("li");
+              item.className = "debug-role";
+              const name = document.createElement("strong");
+              name.textContent = role.name || "Unknown role";
+              const id = document.createElement("code");
+              id.textContent = role.id || "";
+              item.append(name, id);
+              list.append(item);
+            }
+          }
+        } catch (error) {
+          setText("diagStatus", "Unable to load diagnostics");
+          setText("diagErrors", error.message || "Request failed");
+        }
+      }
+
+      loadDiagnostics();
+    })();
+  </script>
 </body>
 </html>
