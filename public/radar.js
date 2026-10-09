@@ -9,6 +9,7 @@ const coordinates = document.getElementById("radarCoordinates");
 const showSable = document.getElementById("showSable");
 const showFtbMap = document.getElementById("showFtbMap");
 const ftbMapLayer = document.getElementById("ftbMapLayer");
+const claimLegend = document.getElementById("claimLegend");
 const ftbChunksPanel = document.getElementById("ftbChunksPanel");
 const ftbDimension = document.getElementById("ftbDimension");
 const ftbMapFiles = document.getElementById("ftbMapFiles");
@@ -700,6 +701,13 @@ function renderClaimFactionControls() {
   }
 
   if (claimChunkCount) claimChunkCount.textContent = Object.keys(claimedChunks).length;
+  if (claimLegend) {
+    claimLegend.innerHTML = claimFactions.map(faction =>
+      '<span class="claim-legend-item"><i style="background:' + faction.color + '"></i>' +
+      escapeHtml(faction.name) + '</span>'
+    ).join("");
+    claimLegend.hidden = claimFactions.length === 0;
+  }
   if (claimModeToggle) {
     claimModeToggle.textContent = claimMode ? "EXIT CLAIM MODE" : "CLAIM MODE";
     claimModeToggle.setAttribute("aria-pressed", String(claimMode));
@@ -809,6 +817,10 @@ function renderClaimsLayer(width, height) {
 
 async function toggleClaimAt(event) {
   if (!claimMode || !radarCanModify || !activeFactionId) return;
+  if (view.scale < 0.35) {
+    setClaimStatus("Zoom in closer so individual 16 × 16 chunks are easy to select.");
+    return;
+  }
   const world = worldAt(event.clientX, event.clientY);
   const x = Math.floor(world.x / 16);
   const z = Math.floor(world.z / 16);
@@ -1179,6 +1191,11 @@ list.addEventListener("keydown", event => {
 
 if (showFtbMap) {
   showFtbMap.addEventListener("change", () => {
+    if (claimMode && !showFtbMap.checked) {
+      showFtbMap.checked = true;
+      setClaimStatus("The FTB map stays visible while Claim Mode is active.");
+      return;
+    }
     ftbMapVisible = showFtbMap.checked;
     localStorage.setItem("radar-show-ftb-map", String(ftbMapVisible));
     renderMap();
@@ -1196,6 +1213,16 @@ if (claimModeToggle) {
       setClaimStatus("Create or select a faction before entering Claim Mode.");
       claimFactionSelect?.focus();
       return;
+    }
+    if (!ftbRegions.length) {
+      setClaimStatus("Import at least one FTB Chunks region before claiming chunks.");
+      return;
+    }
+    if (!ftbMapVisible) {
+      ftbMapVisible = true;
+      if (showFtbMap) showFtbMap.checked = true;
+      localStorage.setItem("radar-show-ftb-map", "true");
+      renderMap();
     }
     setClaimMode(true);
   });
