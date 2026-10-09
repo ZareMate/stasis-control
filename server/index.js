@@ -1162,6 +1162,83 @@ app.post("/api/radar/claims/chunk", requireLogin, requireGuildRole, (req, res) =
   });
 });
 
+app.post("/api/radar/claims/rectangle", requireLogin, requireGuildRole, (req, res) => {
+  const dimension = sanitizeFtbDimension(req.body?.dimension || "minecraft:overworld");
+  const values = [req.body?.x1, req.body?.z1, req.body?.x2, req.body?.z2].map(Number);
+  const factionId = typeof req.body?.factionId === "string" ? req.body.factionId : "";
+
+  if (!dimension) return res.status(400).json({ error: "Invalid claims dimension" });
+  if (!values.every(Number.isSafeInteger) || values.some(value => Math.abs(value) > 2000000)) {
+    return res.status(400).json({ error: "Rectangle bounds must be valid chunk coordinates" });
+  }
+  if (!radarClaims.factions.some(faction => faction.id === factionId)) {
+    return res.status(400).json({ error: "Select an existing faction first" });
+  }
+
+  const [rawX1, rawZ1, rawX2, rawZ2] = values;
+  const minX = Math.min(rawX1, rawX2);
+  const maxX = Math.max(rawX1, rawX2);
+  const minZ = Math.min(rawZ1, rawZ2);
+  const maxZ = Math.max(rawZ1, rawZ2);
+  const area = (maxX - minX + 1) * (maxZ - minZ + 1);
+  if (!Number.isSafeInteger(area) || area > 4096) {
+    return res.status(400).json({ error: "Select at most 4096 chunks at a time (64 × 64)" });
+  }
+
+  const importedRegions = new Set(
+    listFtbRegions(dimension).map(region => region.x + "," + region.z)
+  );
+  let covered = 0;
+  let changed = 0;
+  let alreadyOwned = 0;
+  if (!radarClaims.dimensions[dimension]) radarClaims.dimensions[dimension] = { chunks: {} };
+  const chunks = radarClaims.dimensions[dimension].chunks;
+
+  for (let z = minZ; z <= maxZ; z++) {
+    for (let x = minX; x <= maxX; x++) {
+      const regionKey = Math.floor(x / 32) + "," + Math.floor(z / 32);
+      if (!importedRegions.has(regionKey)) continue;
+      covered++;
+      const key = x + "," + z;
+      if (chunks[key] === factionId) {
+        alreadyOwned++;
+      } else {
+        chunks[key] = factionId;
+        changed++;
+      }
+    }
+  }
+
+  if (covered === 0) {
+    return res.status(400).json({
+      error: "The selected rectangle does not cover any imported FTB Chunks region",
+      covered: 0,
+      skipped: area
+    });
+  }
+
+  try {
+    saveRadarClaims();
+  } catch (error) {
+    console.error("[Radar] Unable to save rectangle claim:", error.message);
+    return res.status(500).json({ error: "Unable to save rectangle claim" });
+  }
+
+  broadcastClaimsChanged();
+  res.json({
+    ok: true,
+    dimension,
+    factionId,
+    bounds: { x1: minX, z1: minZ, x2: maxX, z2: maxZ },
+    area,
+    covered,
+    changed,
+    alreadyOwned,
+    skipped: area - covered,
+    claimedChunks: Object.keys(chunks).length
+  });
+});
+
 app.post("/api/radar/claims/faction", requireLogin, requireGuildRole, (req, res) => {
   const requestedId = typeof req.body?.id === "string" ? req.body.id.trim() : "";
   const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
