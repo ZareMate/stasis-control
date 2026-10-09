@@ -1262,3 +1262,9 @@ html,body.radar-page{
   border-radius:2px;
   box-shadow:0 0 5px currentColor;
 }
+
+
+.radar-map.claim-selecting{
+  cursor:crosshair!important;
+  user-select:none;
+}
