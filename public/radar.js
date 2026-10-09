@@ -61,6 +61,8 @@ let activeFactionId = "";
 let claimMode = false;
 let claimDimension = "minecraft:overworld";
 let pendingClaimChunks = new Set();
+let claimSelection = null;
+let claimDrag = null;
 let ftbTileCache = new Map();
 let ftbRenderToken = 0;
 let ftbPalette = { blockByIndex: {}, colors: {}, types: {} };
@@ -814,7 +816,69 @@ function renderClaimsLayer(width, height) {
     }
     context.stroke();
   }
+
+  if (claimSelection) {
+    const faction = factionsById.get(activeFactionId);
+    const minX = Math.min(claimSelection.startX, claimSelection.endX);
+    const maxX = Math.max(claimSelection.startX, claimSelection.endX);
+    const minZ = Math.min(claimSelection.startZ, claimSelection.endZ);
+    const maxZ = Math.max(claimSelection.startZ, claimSelection.endZ);
+    const x = width / 2 + (minX * 16 - view.x) * view.scale;
+    const y = height / 2 + (minZ * 16 - view.z) * view.scale;
+    const rectWidth = (maxX - minX + 1) * 16 * view.scale;
+    const rectHeight = (maxZ - minZ + 1) * 16 * view.scale;
+    context.save();
+    context.globalAlpha = 1;
+    context.fillStyle = faction?.color || "#ffffff";
+    context.globalAlpha = 0.18;
+    context.fillRect(x, y, rectWidth, rectHeight);
+    context.globalAlpha = 0.95;
+    context.strokeStyle = faction?.color || "#ffffff";
+    context.lineWidth = 2;
+    context.setLineDash([7, 4]);
+    context.strokeRect(x + 1, y + 1, Math.max(0, rectWidth - 2), Math.max(0, rectHeight - 2));
+    context.setLineDash([]);
+    context.restore();
+  }
   context.globalAlpha = 1;
+}
+
+async function applyClaimRectangle(startX, startZ, endX, endZ) {
+  if (!claimMode || !radarCanModify || !activeFactionId) return;
+  const faction = claimFactions.find(item => item.id === activeFactionId);
+  if (!faction) return;
+
+  const x1 = Math.min(startX, endX);
+  const x2 = Math.max(startX, endX);
+  const z1 = Math.min(startZ, endZ);
+  const z2 = Math.max(startZ, endZ);
+  const area = (x2 - x1 + 1) * (z2 - z1 + 1);
+  if (area > 4096) {
+    setClaimStatus("Rectangle contains " + area + " chunks. Select at most 4096 chunks (64 × 64).");
+    return;
+  }
+
+  const dimension = currentClaimDimension();
+  setClaimStatus("Assigning " + area + " chunks to " + faction.name + "…");
+  try {
+    const response = await fetch("/api/radar/claims/rectangle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dimension, x1, z1, x2, z2, factionId: faction.id })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Unable to assign rectangle");
+
+    await loadClaims();
+    const details = [];
+    details.push("Assigned " + result.covered + " chunks to " + faction.name + ".");
+    if (result.changed !== undefined) details.push(result.changed + " changed");
+    if (result.alreadyOwned) details.push(result.alreadyOwned + " already owned");
+    if (result.skipped) details.push(result.skipped + " outside imported regions skipped");
+    setClaimStatus(details.join(" "));
+  } catch (error) {
+    setClaimStatus(error.message);
+  }
 }
 
 async function toggleClaimAt(event) {
@@ -1566,20 +1630,86 @@ sableList.addEventListener("keydown", event => {
 });
 
 function worldAt(clientX, clientY) { const bounds = map.getBoundingClientRect(); return { x: view.x + (clientX - bounds.left - bounds.width / 2) / view.scale, z: view.z + (clientY - bounds.top - bounds.height / 2) / view.scale }; }
+function chunkAt(clientX, clientY) {
+  const world = worldAt(clientX, clientY);
+  return { x: Math.floor(world.x / 16), z: Math.floor(world.z / 16) };
+}
 map.addEventListener("pointerdown", event => {
   if (event.button !== 0 || event.target.closest(".radar-controls")) return;
   if (claimMode) {
     event.preventDefault();
     event.stopPropagation();
-    void toggleClaimAt(event);
+    const chunk = chunkAt(event.clientX, event.clientY);
+    claimDrag = {
+      id: event.pointerId,
+      startX: chunk.x,
+      startZ: chunk.z,
+      endX: chunk.x,
+      endZ: chunk.z,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      moved: false
+    };
+    claimSelection = {
+      startX: chunk.x, startZ: chunk.z,
+      endX: chunk.x, endZ: chunk.z
+    };
+    map.setPointerCapture(event.pointerId);
+    map.classList.add("claim-selecting");
+    renderClaimsLayer(map.clientWidth, map.clientHeight);
     return;
   }
   drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
   map.setPointerCapture(event.pointerId);
   map.classList.add("dragging");
 });
-map.addEventListener("pointermove", event => { if (!drag || event.pointerId !== drag.id) return; view.x -= (event.clientX - drag.x) / view.scale; view.z -= (event.clientY - drag.y) / view.scale; drag.x = event.clientX; drag.y = event.clientY; renderMap(); });
-function stopDragging(event) { if (!drag || event.pointerId !== drag.id) return; drag = null; map.classList.remove("dragging"); }
+map.addEventListener("pointermove", event => {
+  if (claimDrag && event.pointerId === claimDrag.id) {
+    event.preventDefault();
+    const chunk = chunkAt(event.clientX, event.clientY);
+    claimDrag.endX = chunk.x;
+    claimDrag.endZ = chunk.z;
+    claimDrag.moved ||= Math.hypot(
+      event.clientX - claimDrag.clientX,
+      event.clientY - claimDrag.clientY
+    ) >= 5;
+    claimSelection = {
+      startX: claimDrag.startX,
+      startZ: claimDrag.startZ,
+      endX: claimDrag.endX,
+      endZ: claimDrag.endZ
+    };
+    renderClaimsLayer(map.clientWidth, map.clientHeight);
+    return;
+  }
+  if (!drag || event.pointerId !== drag.id) return;
+  view.x -= (event.clientX - drag.x) / view.scale;
+  view.z -= (event.clientY - drag.y) / view.scale;
+  drag.x = event.clientX;
+  drag.y = event.clientY;
+  renderMap();
+});
+function stopDragging(event) {
+  if (claimDrag && event.pointerId === claimDrag.id) {
+    const selection = claimDrag;
+    claimDrag = null;
+    claimSelection = null;
+    map.classList.remove("claim-selecting");
+    renderClaimsLayer(map.clientWidth, map.clientHeight);
+
+    if (event.type !== "pointercancel") {
+      if (selection.moved && (selection.startX !== selection.endX || selection.startZ !== selection.endZ)) {
+        void applyClaimRectangle(selection.startX, selection.startZ, selection.endX, selection.endZ);
+      } else {
+        void toggleClaimAt({ clientX: selection.clientX, clientY: selection.clientY });
+      }
+    }
+    return;
+  }
+  if (!drag || event.pointerId !== drag.id) return;
+  drag = null;
+  map.classList.remove("dragging");
+}
 map.addEventListener("pointerup", stopDragging);
 map.addEventListener("pointercancel", stopDragging);
 map.addEventListener("wheel", event => { event.preventDefault(); const world = worldAt(event.clientX, event.clientY); view.scale = Math.min(12, Math.max(.15, view.scale * (event.deltaY < 0 ? 1.15 : 1 / 1.15))); const bounds = map.getBoundingClientRect(); view.x = world.x - (event.clientX - bounds.left - bounds.width / 2) / view.scale; view.z = world.z - (event.clientY - bounds.top - bounds.height / 2) / view.scale; renderMap(); }, { passive: false });
