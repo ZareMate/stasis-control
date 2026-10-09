@@ -1698,7 +1698,7 @@ function stopDragging(event) {
     renderClaimsLayer(map.clientWidth, map.clientHeight);
 
     if (event.type !== "pointercancel") {
-      if (selection.moved && (selection.startX !== selection.endX || selection.startZ !== selection.endZ)) {
+      if (selection.startX !== selection.endX || selection.startZ !== selection.endZ) {
         void applyClaimRectangle(selection.startX, selection.startZ, selection.endX, selection.endZ);
       } else {
         void toggleClaimAt({ clientX: selection.clientX, clientY: selection.clientY });
