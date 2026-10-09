@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&display=swap">
   <link rel="stylesheet" href="/style.css?v=modrinth-20261008">
   <link rel="stylesheet" href="/radar.css">
-  <link rel="stylesheet" href="/radar-overrides.css?v=20261009-sable-layout">
+  <link rel="stylesheet" href="/radar-overrides.css?v=20261009-claims1">
 </head>
 <body class="radar-page">
   <header class="topbar radar-topbar">
@@ -56,6 +56,7 @@
             <input id="showSable" type="checkbox" checked>
             SHOW SABLE
           </label>
+          <button id="claimModeToggle" type="button" hidden aria-pressed="false">CLAIM MODE</button>
           <button id="resetView" type="button">RESET VIEW</button>
         </div>
 
@@ -68,6 +69,7 @@
         </div>
 
         <div id="ftbMapLayer" class="radar-ftb-layer" aria-hidden="true"></div>
+        <canvas id="claimsLayer" class="radar-claims-layer" aria-hidden="true"></canvas>
         <div id="radarEmpty" class="radar-empty">Waiting for radar data…</div>
       </div>
 
@@ -154,8 +156,34 @@
       <div id="ftbStatus" class="building-status" aria-live="polite"></div>
       <div id="ftbRegionList" class="building-list"></div>
     </section>
+
+    <section id="claimsPanel" class="map-editor-panel claims-panel" hidden aria-hidden="true">
+      <div class="editor-heading">
+        <div>
+          <h3>Faction claims</h3>
+          <p>Click 16 × 16 chunks on the map to paint connected territories</p>
+        </div>
+        <span class="editor-count" id="claimChunkCount">0</span>
+      </div>
+
+      <div class="claims-toolbar">
+        <label for="claimFactionSelect">Active faction</label>
+        <select id="claimFactionSelect" aria-label="Active claim faction">
+          <option value="">Create a faction first</option>
+        </select>
+        <span id="claimStatus" class="claim-status" aria-live="polite">Create or select a faction, then enable Claim Mode.</span>
+      </div>
+      <p class="claim-help">When Claim Mode is active, click a chunk inside an imported region: an unclaimed chunk is assigned to the selected faction, clicking its own chunk removes it, and clicking another faction's chunk transfers it. Adjacent chunks of the same faction join into one outlined area. Disable Claim Mode to pan the map.</p>
+
+      <form id="claimFactionForm" class="claim-faction-form">
+        <input id="claimFactionName" type="text" maxlength="40" required placeholder="Faction name" aria-label="New faction name" value="New faction">
+        <label class="claim-color-field"><span>Color</span><input id="claimFactionColor" type="color" value="#e0a039" aria-label="New faction color"></label>
+        <button type="submit">ADD FACTION</button>
+      </form>
+      <div id="claimFactionList" class="claim-faction-list"></div>
+    </section>
   </main>
 
-  <script src="/radar.js?v=20261009-sable-layout2"></script>
+  <script src="/radar.js?v=20261009-claims1"></script>
 </body>
 </html>
