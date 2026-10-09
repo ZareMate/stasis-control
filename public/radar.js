@@ -1024,6 +1024,7 @@ function renderMap() {
   map.style.backgroundSize = `${grid}px ${grid}px,${grid}px ${grid}px,${grid * 5}px ${grid * 5}px,${grid * 5}px ${grid * 5}px`;
   map.style.backgroundPosition = `${offsetX}px ${offsetZ}px,${offsetX}px ${offsetZ}px,${offsetX}px ${offsetZ}px,${offsetX}px ${offsetZ}px`;
   renderFtbMap(width, height);
+  renderClaimsLayer(width, height);
   coordinates.textContent = `X ${Math.round(view.x)} · Z ${Math.round(view.z)} · ${view.scale.toFixed(1)} px/block`;
   for (const road of roads) {
     const point = document.createElement("div");
@@ -1184,6 +1185,140 @@ if (showFtbMap) {
   });
 }
 
+
+if (claimModeToggle) {
+  claimModeToggle.addEventListener("click", () => {
+    if (claimMode) {
+      setClaimMode(false);
+      return;
+    }
+    if (!activeFactionId) {
+      setClaimStatus("Create or select a faction before entering Claim Mode.");
+      claimFactionSelect?.focus();
+      return;
+    }
+    setClaimMode(true);
+  });
+}
+
+if (claimFactionSelect) {
+  claimFactionSelect.addEventListener("change", () => {
+    activeFactionId = claimFactionSelect.value;
+    renderClaimFactionControls();
+    renderClaimsLayer(map.clientWidth, map.clientHeight);
+    if (claimMode) setClaimMode(Boolean(activeFactionId));
+    else setClaimStatus(activeFactionId ? "Selected faction: " + (claimFactions.find(item => item.id === activeFactionId)?.name || "") : "Create or select a faction.");
+  });
+}
+
+if (claimFactionForm) {
+  claimFactionForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!radarCanModify) return;
+    const submit = claimFactionForm.querySelector('button[type="submit"]');
+    const name = claimFactionName.value.trim();
+    const color = claimFactionColor.value;
+    if (!name) {
+      setClaimStatus("Enter a faction name.");
+      claimFactionName.focus();
+      return;
+    }
+    submit.disabled = true;
+    setClaimStatus("Creating faction…");
+    try {
+      const response = await fetch("/api/radar/claims/faction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, color })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Unable to create faction");
+      claimFactions = result.factions || [...claimFactions, result.faction];
+      activeFactionId = result.faction.id;
+      claimFactionName.value = "";
+      renderClaimFactionControls();
+      renderClaimsLayer(map.clientWidth, map.clientHeight);
+      setClaimStatus("Faction " + result.faction.name + " created and selected.");
+    } catch (error) {
+      setClaimStatus(error.message);
+    } finally {
+      submit.disabled = false;
+    }
+  });
+}
+
+if (claimFactionList) {
+  claimFactionList.addEventListener("click", async event => {
+    const button = event.target.closest("[data-claim-action]");
+    if (!button) return;
+    const row = button.closest(".claim-faction-row");
+    const id = button.dataset.factionId || row?.dataset.factionId;
+    const faction = claimFactions.find(item => item.id === id);
+    if (!faction) return;
+
+    const action = button.dataset.claimAction;
+    if (action === "select") {
+      activeFactionId = id;
+      renderClaimFactionControls();
+      renderClaimsLayer(map.clientWidth, map.clientHeight);
+      if (claimMode) setClaimMode(true);
+      else setClaimStatus("Selected faction: " + faction.name + ".");
+      return;
+    }
+
+    if (action === "save") {
+      const name = row.querySelector("[data-claim-name]")?.value.trim() || "";
+      const color = row.querySelector("[data-claim-color]")?.value || "";
+      if (!name) {
+        setClaimStatus("Faction name cannot be empty.");
+        row.querySelector("[data-claim-name]")?.focus();
+        return;
+      }
+      button.disabled = true;
+      setClaimStatus("Saving faction…");
+      try {
+        const response = await fetch("/api/radar/claims/faction", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, name, color })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || "Unable to save faction");
+        claimFactions = result.factions || claimFactions.map(item => item.id === id ? result.faction : item);
+        renderClaimFactionControls();
+        renderClaimsLayer(map.clientWidth, map.clientHeight);
+        setClaimStatus("Saved faction " + result.faction.name + ".");
+      } catch (error) {
+        setClaimStatus(error.message);
+        button.disabled = false;
+      }
+      return;
+    }
+
+    if (action === "delete") {
+      const count = Object.values(claimedChunks).filter(factionId => factionId === id).length;
+      const warning = count
+        ? "Delete faction “" + faction.name + "” and remove its " + count + " claim(s) in this dimension? Claims in every dimension will be removed."
+        : "Delete faction “" + faction.name + "”?";
+      if (!window.confirm(warning)) return;
+      button.disabled = true;
+      setClaimStatus("Deleting faction…");
+      try {
+        const response = await fetch("/api/radar/claims/faction/" + encodeURIComponent(id), { method: "DELETE" });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || "Unable to delete faction");
+        claimFactions = result.factions || claimFactions.filter(item => item.id !== id);
+        if (activeFactionId === id) activeFactionId = claimFactions[0]?.id || "";
+        await loadClaims();
+        setClaimStatus("Deleted faction " + faction.name + " and its claims.");
+      } catch (error) {
+        setClaimStatus(error.message);
+        button.disabled = false;
+      }
+    }
+  });
+}
+
 if (ftbImportButton) {
   ftbImportButton.addEventListener("click", importFtbRegions);
 }
@@ -1194,6 +1329,7 @@ if (ftbDimension) {
   ftbDimension.addEventListener("change", () => {
     ftbTileCache = new Map();
     loadFtbRegions();
+    loadClaims();
   });
 }
 
@@ -1400,7 +1536,18 @@ sableList.addEventListener("keydown", event => {
 });
 
 function worldAt(clientX, clientY) { const bounds = map.getBoundingClientRect(); return { x: view.x + (clientX - bounds.left - bounds.width / 2) / view.scale, z: view.z + (clientY - bounds.top - bounds.height / 2) / view.scale }; }
-map.addEventListener("pointerdown", event => { if (event.button !== 0 || event.target.closest(".radar-controls")) return; drag = { id: event.pointerId, x: event.clientX, y: event.clientY }; map.setPointerCapture(event.pointerId); map.classList.add("dragging"); });
+map.addEventListener("pointerdown", event => {
+  if (event.button !== 0 || event.target.closest(".radar-controls")) return;
+  if (claimMode) {
+    event.preventDefault();
+    event.stopPropagation();
+    void toggleClaimAt(event);
+    return;
+  }
+  drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  map.setPointerCapture(event.pointerId);
+  map.classList.add("dragging");
+});
 map.addEventListener("pointermove", event => { if (!drag || event.pointerId !== drag.id) return; view.x -= (event.clientX - drag.x) / view.scale; view.z -= (event.clientY - drag.y) / view.scale; drag.x = event.clientX; drag.y = event.clientY; renderMap(); });
 function stopDragging(event) { if (!drag || event.pointerId !== drag.id) return; drag = null; map.classList.remove("dragging"); }
 map.addEventListener("pointerup", stopDragging);
@@ -1411,5 +1558,7 @@ new ResizeObserver(renderMap).observe(map);
 function connect() { clearTimeout(reconnectTimer); const protocol = location.protocol === "https:" ? "wss" : "ws"; socket = new WebSocket(`${protocol}://${location.host}/ws?role=radar-browser`); socket.onopen = () => { dot.classList.remove("offline"); connection.textContent = "Connected"; }; socket.onclose = () => { dot.classList.add("offline"); connection.textContent = "Disconnected"; reconnectTimer = setTimeout(connect, 2500); }; socket.onmessage = event => { try { const message = JSON.parse(event.data); if (message.type === "radar") {
   radarSignalReceived = true;
   render(message.players || [], message.sableContraptions || [], message.buildings || [], message.roads || [], message.updatedAt);
+} else if (message.type === "claims-changed") {
+  loadClaims();
 } } catch {} }; }
 loadRadarPermissions().then(allowed => { if (allowed) connect(); }).catch(() => location.assign("/access-denied"));
