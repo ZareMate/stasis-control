@@ -56,6 +56,7 @@ const DISCORD_SESSIONS_FILE = path.join(DATA_DIR, "discord-sessions.json");
 const SABLE_NAMES_FILE = path.join(DATA_DIR, "sable-names.json");
 const RADAR_BUILDINGS_FILE = path.join(DATA_DIR, "radar-buildings.json");
 const RADAR_ROADS_FILE = path.join(DATA_DIR, "radar-roads.json");
+const RADAR_CLAIMS_FILE = path.join(DATA_DIR, "radar-claims.json");
 const FTB_CHUNKS_DIR = process.env.STASIS_FTBCHUNKS_DIR || path.join(DATA_DIR, "ftbchunks");
 const PULL_API_TOKEN = process.env.PULL_API_TOKEN || process.env.STASIS_TOKEN || "";
 const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
@@ -735,6 +736,56 @@ function normalizeRadarRoad(road) {
     : null;
 }
 
+
+function loadRadarClaims() {
+  const empty = { factions: [], dimensions: {} };
+  try {
+    const value = JSON.parse(fs.readFileSync(RADAR_CLAIMS_FILE, "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) return empty;
+
+    const factions = Array.isArray(value.factions)
+      ? value.factions.filter(item =>
+          item &&
+          typeof item.id === "string" && item.id.length <= 80 &&
+          typeof item.name === "string" && item.name.trim().length > 0 && item.name.length <= 40 &&
+          typeof item.color === "string" && /^#[0-9a-fA-F]{6}$/.test(item.color)
+        ).map(item => ({ id: item.id, name: item.name.trim(), color: item.color.toLowerCase() }))
+      : [];
+    const factionIds = new Set(factions.map(item => item.id));
+    const dimensions = {};
+
+    if (value.dimensions && typeof value.dimensions === "object" && !Array.isArray(value.dimensions)) {
+      for (const [dimension, entry] of Object.entries(value.dimensions)) {
+        if (!sanitizeFtbDimension(dimension) || !entry || typeof entry !== "object") continue;
+        const chunks = {};
+        if (entry.chunks && typeof entry.chunks === "object" && !Array.isArray(entry.chunks)) {
+          for (const [key, factionId] of Object.entries(entry.chunks)) {
+            const match = key.match(/^(-?\\d+),(-?\\d+)$/);
+            if (!match || !factionIds.has(factionId)) continue;
+            const x = Number(match[1]), z = Number(match[2]);
+            if (Number.isSafeInteger(x) && Number.isSafeInteger(z) && Math.abs(x) <= 2000000 && Math.abs(z) <= 2000000) {
+              chunks[x + "," + z] = factionId;
+            }
+          }
+        }
+        dimensions[dimension] = { chunks };
+      }
+    }
+    return { factions, dimensions };
+  } catch {
+    return empty;
+  }
+}
+
+function saveRadarClaims() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const temporary = RADAR_CLAIMS_FILE + ".tmp";
+  fs.writeFileSync(temporary, JSON.stringify(radarClaims, null, 2) + "\\n", { encoding: "utf8", mode: 0o600 });
+  fs.chmodSync(temporary, 0o600);
+  fs.renameSync(temporary, RADAR_CLAIMS_FILE);
+}
+
+let radarClaims = loadRadarClaims();
 let sableNames = loadSableNames();
 let radarBuildings = loadRadarBuildings();
 let radarRoads = loadRadarRoads();
@@ -1059,6 +1110,113 @@ if (!CONTROLLER_TOKEN) {
 }
 
 app.use(express.json({ limit: "32kb" }));
+
+app.get("/api/radar/claims", requireLogin, requireRadarRole, (req, res) => {
+  const dimension = sanitizeFtbDimension(req.query.dimension || "minecraft:overworld");
+  if (!dimension) return res.status(400).json({ error: "Invalid claims dimension" });
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    dimension,
+    factions: radarClaims.factions,
+    chunks: radarClaims.dimensions[dimension]?.chunks || {}
+  });
+});
+
+app.post("/api/radar/claims/chunk", requireLogin, requireGuildRole, (req, res) => {
+  const dimension = sanitizeFtbDimension(req.body?.dimension || "minecraft:overworld");
+  const x = Number(req.body?.x);
+  const z = Number(req.body?.z);
+  const factionId = typeof req.body?.factionId === "string" ? req.body.factionId : "";
+
+  if (!dimension) return res.status(400).json({ error: "Invalid claims dimension" });
+  if (!Number.isSafeInteger(x) || !Number.isSafeInteger(z) || Math.abs(x) > 2000000 || Math.abs(z) > 2000000) {
+    return res.status(400).json({ error: "Chunk coordinates must be valid integers" });
+  }
+  if (!radarClaims.factions.some(faction => faction.id === factionId)) {
+    return res.status(400).json({ error: "Select an existing faction first" });
+  }
+
+  if (!radarClaims.dimensions[dimension]) radarClaims.dimensions[dimension] = { chunks: {} };
+  const chunks = radarClaims.dimensions[dimension].chunks;
+  const key = x + "," + z;
+  const removed = chunks[key] === factionId;
+  if (removed) delete chunks[key];
+  else chunks[key] = factionId;
+
+  try {
+    saveRadarClaims();
+  } catch (error) {
+    console.error("[Radar] Unable to save chunk claim:", error.message);
+    return res.status(500).json({ error: "Unable to save chunk claim" });
+  }
+
+  broadcastClaimsChanged();
+  res.json({
+    ok: true,
+    dimension,
+    x,
+    z,
+    removed,
+    factionId: removed ? null : factionId,
+    claimedChunks: Object.keys(chunks).length
+  });
+});
+
+app.post("/api/radar/claims/faction", requireLogin, requireGuildRole, (req, res) => {
+  const requestedId = typeof req.body?.id === "string" ? req.body.id.trim() : "";
+  const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+  const color = typeof req.body?.color === "string" ? req.body.color.trim() : "";
+
+  if (!name || name.length > 40) return res.status(400).json({ error: "Faction name must be 1–40 characters" });
+  if (!/^#[0-9a-fA-F]{6}$/.test(color)) return res.status(400).json({ error: "Faction color must be a six-digit hex color" });
+
+  let faction;
+  if (requestedId) {
+    faction = radarClaims.factions.find(item => item.id === requestedId);
+    if (!faction) return res.status(404).json({ error: "Faction not found" });
+    faction.name = name;
+    faction.color = color.toLowerCase();
+  } else {
+    if (radarClaims.factions.length >= 100) return res.status(400).json({ error: "Faction limit reached (100)" });
+    faction = { id: crypto.randomUUID(), name, color: color.toLowerCase() };
+    radarClaims.factions.push(faction);
+  }
+
+  try {
+    saveRadarClaims();
+  } catch (error) {
+    console.error("[Radar] Unable to save faction:", error.message);
+    return res.status(500).json({ error: "Unable to save faction" });
+  }
+
+  broadcastClaimsChanged();
+  res.json({ ok: true, faction, factions: radarClaims.factions });
+});
+
+app.delete("/api/radar/claims/faction/:id", requireLogin, requireGuildRole, (req, res) => {
+  const id = String(req.params.id || "");
+  const nextFactions = radarClaims.factions.filter(faction => faction.id !== id);
+  if (nextFactions.length === radarClaims.factions.length) {
+    return res.status(404).json({ error: "Faction not found" });
+  }
+
+  radarClaims.factions = nextFactions;
+  for (const entry of Object.values(radarClaims.dimensions)) {
+    for (const [key, factionId] of Object.entries(entry.chunks)) {
+      if (factionId === id) delete entry.chunks[key];
+    }
+  }
+
+  try {
+    saveRadarClaims();
+  } catch (error) {
+    console.error("[Radar] Unable to delete faction:", error.message);
+    return res.status(500).json({ error: "Unable to delete faction" });
+  }
+
+  broadcastClaimsChanged();
+  res.json({ ok: true, factions: radarClaims.factions });
+});
 
 app.get("/api/radar/ftbchunks", requireLogin, requireRadarRole, (req, res) => {
   const dimension = sanitizeFtbDimension(req.query.dimension || "minecraft:overworld");
@@ -1440,6 +1598,12 @@ function radarSnapshot() {
       ? reports.reduce((latest, report) => Math.max(latest, report.updatedAt), 0)
       : null
   };
+}
+
+function broadcastClaimsChanged() {
+  for (const client of clients) {
+    if (client.role === "radar-browser") safeSend(client.ws, { type: "claims-changed" });
+  }
 }
 
 function broadcastRadar() {
