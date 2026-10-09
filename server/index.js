@@ -377,7 +377,13 @@ async function userHasRadarRole(session) {
   }
 }
 
-let discordRoleNameCache = { expiresAt: 0, names: {} };
+let discordRoleNameCache = {
+  expiresAt: 0,
+  names: {},
+  status: null,
+  error: null,
+  guildRoleCount: null
+};
 
 async function discordRoleNames() {
   const now = Date.now();
@@ -387,6 +393,9 @@ async function discordRoleNames() {
     [REQUIRED_ROLE_ID]: "Stasis Control access",
     [RADAR_VIEW_ROLE_ID]: "Radar viewer"
   };
+  let status = null;
+  let error = null;
+  let guildRoleCount = null;
 
   if (DISCORD_BOT_TOKEN) {
     try {
@@ -397,19 +406,41 @@ async function discordRoleNames() {
           signal: AbortSignal.timeout(5000)
         }
       );
+      status = response.status;
       if (response.ok) {
         const roles = await response.json();
-        for (const role of roles) {
+        guildRoleCount = Array.isArray(roles) ? roles.length : null;
+        for (const role of Array.isArray(roles) ? roles : []) {
           if (role?.id && role?.name) names[String(role.id)] = String(role.name);
         }
+      } else {
+        error = "Guild role-name lookup returned HTTP " + response.status;
       }
-    } catch (error) {
-      console.warn("[Auth] Unable to load Discord role names:", error.message);
+    } catch (cause) {
+      error = "Guild role-name lookup failed: " + cause.message;
+      console.warn("[Auth]", error);
     }
+  } else {
+    error = "DISCORD_TOKEN is not configured; only configured access-role names are available";
   }
 
-  discordRoleNameCache = { expiresAt: now + 10 * 60 * 1000, names };
+  discordRoleNameCache = {
+    expiresAt: now + 10 * 60 * 1000,
+    names,
+    status,
+    error,
+    guildRoleCount
+  };
   return names;
+}
+
+function roleNameLookupSnapshot(names = discordRoleNameCache.names) {
+  return {
+    httpStatus: discordRoleNameCache.status,
+    error: discordRoleNameCache.error,
+    guildRoleCount: discordRoleNameCache.guildRoleCount,
+    knownRoleNames: Object.keys(names || {}).length
+  };
 }
 
 async function diagnoseDiscordAccess(session) {
@@ -455,6 +486,7 @@ async function diagnoseDiscordAccess(session) {
       guildMembership: "Simulated local test session",
       lookupSource: "local test mode",
       lookupStatus: null,
+      roleNameLookup: roleNameLookupSnapshot(names),
       roles: ids.map(id => ({ id, name: names[id] || "Role" })),
       requiredRoleDetected: ids.includes(REQUIRED_ROLE_ID),
       radarViewerDetected: ids.includes(RADAR_VIEW_ROLE_ID),
@@ -559,6 +591,7 @@ async function diagnoseDiscordAccess(session) {
     lookupStatus,
     oauthStatus,
     botStatus,
+    roleNameLookup: roleNameLookupSnapshot(roleNames),
     roles,
     requiredRoleDetected,
     radarViewerDetected,
