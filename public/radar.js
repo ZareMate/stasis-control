@@ -883,7 +883,8 @@ function render(nextPlayers, nextSableContraptions, nextBuildings, nextRoads, up
   renderMap();
   // Keep the SABLE list visible; the layout moves it below the map when markers are off.
   sableLegend.classList.toggle("sable-hidden", !sableVisible);
-  radarShell.classList.toggle("sable-filtered", !sableVisible);
+  // Hiding SABLE only hides its map markers; keep both list panels side by side.
+  radarShell.classList.remove("sable-filtered");
   list.innerHTML = players.length ? players.map((player, index) => {
     const status = statusFor(player);
     return `<div class="radar-row ${status}" data-player-index="${index}" role="button" tabindex="0" title="Center map on ${escapeHtml(player.username)}"><strong><i></i>${escapeHtml(player.username)}</strong><span>${status.toUpperCase()} · X ${Math.round(player.x)} · Y ${Math.round(player.y)} · Z ${Math.round(player.z)}${player.floor ? " · " + escapeHtml(player.floor) : ""}</span></div>`;
